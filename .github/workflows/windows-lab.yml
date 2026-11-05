@@ -41,8 +41,15 @@ jobs:
         continue-on-error: true
         shell: pwsh
         run: |
+          # hosted runners have no sound device and the Windows Audio service stopped: start it first
+          Set-Service Audiosrv -StartupType Automatic
+          Start-Service Audiosrv
+          Set-Service AudioEndpointBuilder -StartupType Automatic -ErrorAction SilentlyContinue
+          Start-Service AudioEndpointBuilder -ErrorAction SilentlyContinue
           choco install ffmpeg -y --no-progress
           choco install vb-cable -y --no-progress
+          Start-Sleep -Seconds 5
+          Get-Service Audiosrv, AudioEndpointBuilder | Format-Table Status, Name -AutoSize
           Get-PnpDevice -Class AudioEndpoint -ErrorAction SilentlyContinue | Format-Table Status, FriendlyName -AutoSize
 
       - name: the real drivers, through the fake controller

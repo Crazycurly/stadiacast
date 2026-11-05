@@ -94,6 +94,25 @@ def occupied_xinput_slots() -> set[int]:
     return set()
 
 
+def wait_until_plugged_in(
+    update: Callable[[], None], timeout: float = 10.0, sleep: Callable[[float], None] = time.sleep
+) -> None:
+    """Send the first report once Windows has finished plugging the new pad in.
+
+    ViGEm answers ``VIGEM_ERROR_TARGET_NOT_PLUGGED_IN`` to a report sent before the plug-in
+    completes, which takes a moment after the target is added (seconds on a slow machine).
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            update()
+            return
+        except RuntimeError as e:
+            if "NOT_PLUGGED_IN" not in str(e) or time.monotonic() >= deadline:
+                raise
+            sleep(0.1)
+
+
 class ViGEmPad:
     """One ViGEm Xbox 360 pad. Create it off the event loop: the wake-up dance sleeps."""
 
@@ -106,6 +125,7 @@ class ViGEmPad:
         self.pad: Any = vg.VX360Gamepad()
         self.mask = 0
         self.slot: int | None = None
+        wait_until_plugged_in(self.pad.update)
         if settle:
             self._settle(before)
 

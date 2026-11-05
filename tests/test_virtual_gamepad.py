@@ -10,7 +10,7 @@ import pytest
 
 from stadiacast.config import Config
 from stadiacast.log import EventLog
-from stadiacast.virtual_gamepad import BUTTON_BITS, MOTOR_SCALE, VirtualGamepads
+from stadiacast.virtual_gamepad import BUTTON_BITS, MOTOR_SCALE, VirtualGamepads, wait_until_plugged_in
 from tests.helpers import connect_firmware_flow, fake, make_receiver, single, wait_for
 
 
@@ -149,3 +149,29 @@ def test_a_missing_driver_or_extra_is_a_clear_error(tmp_path, monkeypatch) -> No
     monkeypatch.setitem(sys.modules, "vgamepad", None)
     with pytest.raises(RuntimeError, match="gamepad extra"):
         VirtualGamepads.create(cfg, EventLog(None, echo=False), None)  # type: ignore[arg-type]
+
+
+def test_the_first_report_waits_for_the_plug_in() -> None:
+    """ViGEm refuses reports until Windows has plugged the new pad in; other errors are not retried."""
+    calls: list[int] = []
+    naps: list[float] = []
+
+    def update() -> None:
+        calls.append(1)
+        if len(calls) < 3:
+            raise RuntimeError("Error: VIGEM_ERROR_TARGET_NOT_PLUGGED_IN")
+
+    wait_until_plugged_in(update, timeout=5.0, sleep=naps.append)
+    assert len(calls) == 3 and naps == [0.1, 0.1]
+
+    def broken() -> None:
+        raise RuntimeError("Error: VIGEM_ERROR_BUS_NOT_FOUND")
+
+    with pytest.raises(RuntimeError, match="BUS_NOT_FOUND"):
+        wait_until_plugged_in(broken, timeout=5.0, sleep=naps.append)
+
+    def never() -> None:
+        raise RuntimeError("Error: VIGEM_ERROR_TARGET_NOT_PLUGGED_IN")
+
+    with pytest.raises(RuntimeError, match="NOT_PLUGGED_IN"):
+        wait_until_plugged_in(never, timeout=0.0, sleep=naps.append)
