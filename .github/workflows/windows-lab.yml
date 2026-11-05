@@ -37,10 +37,11 @@ jobs:
           if ($p.ExitCode -notin 0, 3010) { exit $p.ExitCode }
           Get-PnpDevice | Where-Object { $_.FriendlyName -like "*ViGEm*" -or $_.FriendlyName -like "*Virtual Gamepad*" } | Format-Table Status, FriendlyName -AutoSize
 
-      - name: install a virtual audio device (VB-CABLE), for the loopback capture
+      - name: install a virtual audio device (VB-CABLE) and ffmpeg, for the loopback capture
         continue-on-error: true
         shell: pwsh
         run: |
+          choco install ffmpeg -y --no-progress
           choco install vb-cable -y --no-progress
           Get-PnpDevice -Class AudioEndpoint -ErrorAction SilentlyContinue | Format-Table Status, FriendlyName -AutoSize
 

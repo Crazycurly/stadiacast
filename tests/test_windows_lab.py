@@ -11,6 +11,7 @@ import sys
 
 import pytest
 
+from stadiacast.audio import ffmpeg_path
 from tests.helpers import connect_firmware_flow, make_receiver, single, wait_for
 
 pytestmark = pytest.mark.skipif(
@@ -90,6 +91,8 @@ def test_a_real_vigem_pad_follows_the_controller_and_reports_the_rumble(tmp_path
 def test_the_windows_loopback_reaches_the_controller(tmp_path) -> None:
     from stadiacast import loopback
 
+    if ffmpeg_path() is None:
+        pytest.skip("needs ffmpeg (with libopus) on PATH")
     if not loopback.available():
         pytest.skip("pyaudiowpatch is not installed")
     try:

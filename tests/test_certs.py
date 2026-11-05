@@ -6,6 +6,7 @@ import datetime
 import itertools
 import os
 import ssl
+import sys
 
 import pytest
 from cryptography import x509
@@ -25,6 +26,13 @@ from stadiacast.config import Config
 from stadiacast.log import EventLog
 
 
+def _assert_private(path: str) -> None:
+    """The key file is readable by its owner only. Windows has no permission bits (every file
+    reports 0o666); there the user's temp directory keeps it private."""
+    if sys.platform != "win32":
+        assert oct(os.stat(path).st_mode & 0o777) == "0o600"
+
+
 def test_self_signed_pair_covers_the_google_names_and_keeps_the_key_private(tmp_path):
     cert_path, key_path = str(tmp_path / "sub" / "lab.crt"), str(tmp_path / "sub" / "lab.key")
     create_self_signed(cert_path, key_path, days=10)
@@ -34,7 +42,7 @@ def test_self_signed_pair_covers_the_google_names_and_keeps_the_key_private(tmp_
     assert sans == GOOGLE_SANS
     assert cert.issuer == cert.subject
     assert (cert.not_valid_after_utc - cert.not_valid_before_utc).days == 11
-    assert oct(os.stat(key_path).st_mode & 0o777) == "0o600"
+    _assert_private(key_path)
 
 
 def test_ensure_certificate_creates_a_lab_pair_only_when_asked(tmp_path):
@@ -103,7 +111,7 @@ def test_builtin_credential_is_the_default_when_nothing_is_configured(tmp_path, 
     cfg = Config(cert=missing_cert, key=missing_key)
     ensure_certificate(cfg, log)
     assert cfg.cert != missing_cert and os.path.exists(cfg.cert) and os.path.exists(cfg.key)
-    assert oct(os.stat(cfg.key).st_mode & 0o777) == "0o600"
+    _assert_private(cfg.key)
     assert log.counts == {"builtin_credential": 1}
     assert log.records[-1]["subject"] == "cloudcast-pa.googleapis.com" and log.records[-1]["chain"] == 1
     ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(cfg.cert, cfg.key)
