@@ -144,7 +144,7 @@ def test_a_missing_driver_or_extra_is_a_clear_error(tmp_path, monkeypatch) -> No
     monkeypatch.syspath_prepend(str(tmp_path))
     monkeypatch.delitem(sys.modules, "vgamepad", raising=False)
     cfg = Config(cert="x", key="y", gamepad="vigem")
-    with pytest.raises(RuntimeError, match="ViGEmBus driver installed .*BUS_NOT_FOUND"):
+    with pytest.raises(RuntimeError, match=r"ViGEmBus driver installed .*BUS_NOT_FOUND"):
         VirtualGamepads.create(cfg, EventLog(None, echo=False), None)  # type: ignore[arg-type]
     monkeypatch.setitem(sys.modules, "vgamepad", None)
     with pytest.raises(RuntimeError, match="gamepad extra"):
