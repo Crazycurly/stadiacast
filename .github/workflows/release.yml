@@ -1,0 +1,109 @@
+name: Release
+
+# A tag v* builds the standalone executables for Windows, macOS (Apple silicon) and Linux, the
+# sdist and the wheel, and attaches them to the GitHub release of that tag: the existing one when
+# the release was created first, otherwise a new draft with the CHANGELOG section as its notes.
+# Run by hand (workflow_dispatch) it only builds and keeps the archives as workflow artifacts.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  executables:
+    name: executables (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x86_64
+          - os: macos-latest
+            target: macos-arm64
+          - os: windows-latest
+            target: windows-x86_64
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - name: Linux needs PortAudio for the audio extra
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libportaudio2
+      - run: uv sync --all-extras --group release --locked
+      - name: version
+        id: version
+        shell: bash
+        run: echo "version=$(uv run python -c 'import stadiacast; print(stadiacast.__version__)')" >> "$GITHUB_OUTPUT"
+      - run: uv run pyinstaller packaging/stadiacast.spec --noconfirm --clean
+      - name: smoke test the executables
+        shell: bash
+        run: |
+          dist/stadiacast --version
+          dist/stadiacast --help > /dev/null
+          dist/stadiacast --helper dns_sink --help > /dev/null
+          dist/stadiacast-provision --help > /dev/null
+      - name: archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="stadiacast-${{ steps.version.outputs.version }}-${{ matrix.target }}"
+          mkdir -p "out/$name"
+          cp README.md LICENSE NOTICE "out/$name/"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp dist/stadiacast.exe dist/stadiacast-provision.exe "out/$name/"
+            (cd out && 7z a -tzip "$name.zip" "$name" > /dev/null)
+          else
+            cp dist/stadiacast dist/stadiacast-provision "out/$name/"
+            (cd out && tar -czf "$name.tar.gz" "$name")
+          fi
+          ls -l out/*.zip out/*.tar.gz 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            out/*.zip
+            out/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: attach to the release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: executables
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+      - name: the tag must be the package version
+        run: |
+          version=$(uv run --no-dev python -c 'import stadiacast; print(stadiacast.__version__)')
+          test "v$version" = "${GITHUB_REF_NAME}" || { echo "tag ${GITHUB_REF_NAME} but version $version"; exit 1; }
+      - run: uv build
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: release notes from the CHANGELOG
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '$0 ~ "^## \\[" v "\\]" {on=1; next} /^## \[/ {on=0} on' CHANGELOG.md > notes.md
+          test -s notes.md || echo "Stadiacast $version" > notes.md
+      - name: attach the files (a new draft release when the tag has none)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          files=(artifacts/* dist/*)
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "${files[@]}" --draft --title "Stadiacast ${GITHUB_REF_NAME#v}" --notes-file notes.md
+          fi

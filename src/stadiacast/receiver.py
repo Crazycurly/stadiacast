@@ -43,6 +43,14 @@ MAX_CONTROLLERS = 8
 RPC_PATH = re.compile(r"^/v1:([A-Za-z0-9_]+)$")
 
 
+def helper_command(module: str, args: list[str]) -> list[str]:
+    """The command line for ``stadiacast.helpers.<module>``: ``python -m`` normally, or the frozen
+    executable re-launched with ``--helper`` (there is no interpreter to run ``-m`` in a bundle)."""
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "--helper", module, *args]
+    return [sys.executable, "-m", f"stadiacast.helpers.{module}", *args]
+
+
 class Receiver:
     """The LAN-side stand-in for the Stadia cloud."""
 
@@ -158,12 +166,10 @@ class Receiver:
         self.log.close()
 
     async def _spawn_helper(self, module: str, args: list[str], out_name: str) -> asyncio.subprocess.Process:
-        """Run a helper (``python -m stadiacast.helpers.<module>``) with its output in the run directory."""
+        """Run a helper process with its output in the run directory (see :func:`helper_command`)."""
         assert self.cfg.log_dir is not None
         with open(os.path.join(self.cfg.log_dir, out_name), "ab") as out:
-            return await asyncio.create_subprocess_exec(
-                sys.executable, "-m", f"stadiacast.helpers.{module}", *args, stdout=out, stderr=out
-            )
+            return await asyncio.create_subprocess_exec(*helper_command(module, args), stdout=out, stderr=out)
 
     async def _start_dns(self) -> None:
         assert self.cfg.log_dir is not None and self.cfg.dns_upstream is not None and self.cfg.advertise_ip is not None

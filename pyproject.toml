@@ -51,6 +51,7 @@ dev = [
   "mypy>=1.13",
   "types-protobuf>=5",
 ]
+release = ["pyinstaller>=6.11"]  # the standalone executables (make exe, the Release workflow)
 
 [project.urls]
 Homepage = "https://github.com/jkfran/stadiacast"

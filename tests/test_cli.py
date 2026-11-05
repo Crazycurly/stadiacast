@@ -79,3 +79,21 @@ def test_version_flag(capsys):
 def test_audio_flags():
     cfg = parse_args(["--audio-source", "system", "--audio-volume", "0.5"])
     assert (cfg.audio_source, cfg.audio_volume) == ("system", 0.5)
+
+
+def test_helpers_run_through_the_executable_when_frozen(monkeypatch, capsys):
+    import sys
+
+    from stadiacast.cli import main
+    from stadiacast.receiver import helper_command
+
+    expected = [sys.executable, "-m", "stadiacast.helpers.dns_sink", "--port", "5353"]
+    assert helper_command("dns_sink", ["--port", "5353"]) == expected
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    assert helper_command("sntp_server", []) == [sys.executable, "--helper", "sntp_server"]
+    assert main(["--helper", "nothing"]) == 2
+    assert "dns_sink, sntp_server" in capsys.readouterr().err
+    with pytest.raises(SystemExit) as exc:
+        main(["--helper", "sntp_server", "--help"])  # dispatched: the helper's own argparse answers
+    assert exc.value.code == 0
+    assert "--port" in capsys.readouterr().out

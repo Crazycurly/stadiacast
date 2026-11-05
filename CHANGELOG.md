@@ -16,6 +16,10 @@ All notable changes to this project are documented here. The format follows
   gated by `SetAudioMode(mode=2)` and paced on a 20 ms grid with their own SSRC and sequence
   numbers (`--audio-source tone|file:PATH`, `ControllerSession.audio_start`). Capture is left
   to the caller: `audio_feed()` takes frames from any encoder.
+- Standalone executables for Windows, macOS (Apple silicon) and Linux attached to every release:
+  `stadiacast` and `stadiacast-provision` as single files built with PyInstaller by the Release
+  workflow (`make exe` builds them locally; the receiver re-launches itself for its DNS and
+  SNTP helpers when frozen).
 - A virtual gamepad on Windows: `--gamepad vigem` turns each controller into an Xbox 360 pad
   through the ViGEmBus driver (the `gamepad` extra), with the stick deadzones of XInput
   (`--gamepad-deadzone`), the game's rumble forwarded to the controller, and one pad per

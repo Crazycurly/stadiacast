@@ -99,3 +99,15 @@ controller sent, when, and what it did in response, with the log records that sh
 
 By participating you agree to the [Code of Conduct](CODE_OF_CONDUCT.md). Security issues go
 through [SECURITY.md](SECURITY.md), not the public tracker.
+
+## Releasing
+
+1. Set the version in `src/stadiacast/__init__.py` and turn the *Unreleased* section of
+   `CHANGELOG.md` into that version's section, with the date.
+2. Commit, then tag and push: `git tag vX.Y.Z && git push origin main vX.Y.Z`.
+3. The Release workflow builds the executables for Windows, macOS and Linux, the sdist and the
+   wheel, and attaches them to the release of that tag: it creates a draft release with the
+   CHANGELOG section as its notes when none exists yet, so publish the draft after a look. Creating
+   the release on GitHub first works too; the files are then attached to it.
+4. `make exe` builds the executables for the current platform into `dist/`, for a check before
+   tagging; `gh workflow run release.yml` builds all three as workflow artifacts without a tag.

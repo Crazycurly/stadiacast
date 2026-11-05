@@ -71,6 +71,16 @@ together.
 
 ## Install
 
+**Ready-made executables.** Every [release](https://github.com/jkfran/stadiacast/releases)
+carries an archive per platform, Windows x86_64, macOS (Apple silicon) and Linux x86_64, with
+`stadiacast` and `stadiacast-provision` as single files that bundle Python, the receiver and its
+extras; only ffmpeg stays separate, for the audio sources. Unpack it and run `stadiacast` from a
+terminal with the same flags as below. The builds are not signed: macOS asks you to allow the
+program once (right-click, Open, or `xattr -d com.apple.quarantine stadiacast`), Windows
+SmartScreen may warn. Ports 53 and 443 need administrator or root rights on every platform.
+
+**From the source**, for development or any other platform:
+
 ```sh
 git clone https://github.com/jkfran/stadiacast.git
 cd stadiacast

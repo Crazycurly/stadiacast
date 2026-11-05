@@ -39,6 +39,9 @@ schemas-check:   ## fail when a compiled schema is stale
 build:           ## build the sdist and the wheel into dist/
 	uv build
 
+exe:             ## build the standalone executables into dist/ (PyInstaller, this platform only)
+	uv run --all-extras --group release pyinstaller packaging/stadiacast.spec --noconfirm --clean
+
 check: lint typecheck schemas-check test   ## everything CI runs
 
 start:           ## start the receiver with the proven preset (tools/start_receiver.sh)
