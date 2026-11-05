@@ -131,11 +131,24 @@ class HttpServer:
         loop = asyncio.get_running_loop()
         loop.set_exception_handler(self._loop_exception_handler)
         if self.cfg.https_port is not None:
-            srv = await self._listen(self.cfg.https_port, tls=True)
+            try:
+                srv = await self._listen(self.cfg.https_port, tls=True)
+            except OSError as e:
+                if self.cfg.https_port == 443:
+                    raise OSError(
+                        f"{e}; the controller connects to 443 only, so another program holding it stops the receiver"
+                    ) from e
+                raise
             self.https_port = srv.sockets[0].getsockname()[1]
             self.log("listening", proto="https", bind=self.cfg.bind, port=self.https_port)
         for p in self.cfg.http_ports:
-            srv = await self._listen(p, tls=False)
+            try:
+                srv = await self._listen(p, tls=False)
+            except OSError as e:
+                # 80 and 8008 only carry the local control endpoints: a busy one must not stop the
+                # receiver, since 443 is the port the controller needs.
+                self.log("port_busy", proto="http", port=p, error=str(e))
+                continue
             port = srv.sockets[0].getsockname()[1]
             self.http_ports.append(port)
             self.log("listening", proto="http", bind=self.cfg.bind, port=port)

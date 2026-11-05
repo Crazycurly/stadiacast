@@ -16,12 +16,17 @@ All notable changes to this project are documented here. The format follows
   gated by `SetAudioMode(mode=2)` and paced on a 20 ms grid with their own SSRC and sequence
   numbers (`--audio-source tone|file:PATH`, `ControllerSession.audio_start`). Capture is left
   to the caller: `audio_feed()` takes frames from any encoder.
+- The battery level, headset detection and the controller's hardware description, in
+  `/_status` and as the `controller_battery`, `controller_audio_config` and
+  `controller_hardware` events.
 
 ### Changed
 - `docs/protocol.md` and `docs/setup.md` record that the firmware does not check certificate
   revocation (confirmed on a real controller).
 - `tools/start_receiver.sh` no longer insists on a pair under `certs/`: without one, the
   receiver serves the built-in credential.
+- A busy port 80 or 8008 no longer stops the receiver (`port_busy`); 443 is the only port
+  the controller needs.
 
 ## [0.1.0] - 2026-10-29
 

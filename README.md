@@ -122,7 +122,8 @@ This installs three commands: `stadiacast`, `stadiacast-show-input` and
    alternate between full boots and short "report wakes" (a blinking light, no rumble): just
    press again.
 6. **Watch the input.** The console shows one line per report; `stadiacast-show-input
-   captures/<stamp>` summarizes a run. `GET http://<receiver>/_status` shows the session state.
+   captures/<stamp>` summarizes a run. `GET http://<receiver>/_status` shows the session state,
+   the battery level and whether a headset is plugged in.
 7. **Rumble.** Start with `tools/start_receiver.sh --start-game`; the game session comes up
    about a second after READY:
 

@@ -142,6 +142,8 @@ class FakeController:
         # payload type tells them apart (the ACKs use --input-payload-type, 96 by default).
         self.audio_frames: list[RtpPacket] = []
         self.audio_payload_type = 111
+        self.headset_plugged = False  # GetControllerStateResponse.f4
+        self.serial_number = "FAKESERIAL0001"  # GetControllerStateResponse.f17
         self.start_game_requests: list[dict] = []  # DisplayToController #8 StartGame {ticket, key, number}
         self._start_game_held: int | None = None  # ticket whose reply waits for GAME_STARTED / GAME_STOPPED
         self.app_state = "browse"  # browse | starting_game | in_game (the Yeti app)
@@ -224,8 +226,12 @@ class FakeController:
     def _send_controller_state(self, ticket: int) -> None:
         p = self.protos
         reply = p.ControllerToDisplay()
-        reply.controller_state.device_id = self.device_id
-        reply.controller_state.f20 = 1
+        cs = reply.controller_state
+        cs.device_id = self.device_id
+        cs.f4 = self.headset_plugged
+        cs.f12, cs.f14, cs.f15 = "Google, Inc.", "GA00722-FAKE", "gotham_pvt_3"
+        cs.f16, cs.f17 = "282115", self.serial_number
+        cs.f20 = 1
         self.endpoint.send_wire(WIRE_ID_DC_RPC_CONTROLLER, p.rpc_response(ticket, reply))
 
     def _on_get_controller_state(self, ticket: int) -> None:
@@ -503,6 +509,26 @@ class FakeController:
         m.f1, m.f2, m.f3, m.f4, m.f5, m.f6, m.f7 = buttons, lx, ly, rx, ry, lt, rt
         self._rpc_ticket += 1
         return self.endpoint.send_wire(WIRE_ID_DC_RPC_CONTROLLER, p.rpc_notification(self._rpc_ticket, msg))
+
+    def send_notification(self, msg) -> bool:
+        """Any ControllerToDisplay as an RpcNotification: the firmware's unsolicited reports."""
+        self._rpc_ticket += 1
+        return self.endpoint.send_wire(WIRE_ID_DC_RPC_CONTROLLER, self.protos.rpc_notification(self._rpc_ticket, msg))
+
+    def send_battery(self, level: float) -> bool:
+        """ControllerToDisplay #10: the charge level as a fraction (the gauge steps once per percent)."""
+        msg = self.protos.ControllerToDisplay()
+        msg.notification10.value = level
+        return self.send_notification(msg)
+
+    def send_audio_config(self, mode: int, ip: str = "192.0.2.10", port: int = 9989) -> bool:
+        """ControllerToDisplay #4: the headset went in (mode 1) or out (mode 0), with the
+        device_info the firmware attaches (its own address and UDP audio port)."""
+        msg = self.protos.ControllerToDisplay()
+        a = msg.audio_configuration_changed
+        a.mode = mode
+        a.device_info.f1, a.device_info.f2, a.device_info.f6 = 2, ip, port
+        return self.send_notification(msg)
 
     async def rpc_call(self, msg, timeout: float = 3.0) -> dict:
         """Send a ControllerToDisplay as an RpcRequest and wait for the display's response."""

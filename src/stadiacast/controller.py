@@ -48,6 +48,11 @@ DISPLAY_TOKEN_PREFIX = f"{SERVER_NAME}-display"
 REGISTRATION_TOKEN = SERVER_NAME
 
 
+def _as_bool(v: Any) -> bool | None:
+    """A tri-state read of a decoded protobuf scalar: None when the field was absent."""
+    return None if v is None else bool(v)
+
+
 def _fresh_display_session() -> dict[str, Any]:
     return {
         "state": "idle",
@@ -63,6 +68,14 @@ def _fresh_display_session() -> dict[str, Any]:
         "keepalive_replies": 0,
         "wire_in": {},
         "input_rpc": 0,
+        # What the controller reports about itself (protocol.md §5): the battery gauge (#10)
+        # and the audio configuration (#4, the headset going in or out).
+        "battery": None,
+        "battery_percent": None,
+        "battery_samples": 0,
+        "headset": None,
+        "audio_mode": None,
+        "audio_events": 0,
     }
 
 
@@ -203,6 +216,8 @@ class ControllerSession:
             "input_stats": dict(self.input.stats),
             "local_ice": self.endpoint.local_params(),
             "udp": [self.cfg.advertise_ip, self.endpoint.local_port],
+            "battery_percent": self.session["display"]["battery_percent"],
+            "headset": self.session["display"]["headset"],
             "playback": self.audio_state(),
             **self.game.status(),
         }
@@ -671,6 +686,8 @@ class ControllerSession:
         if DISPLAY_STATES.index(state) > DISPLAY_STATES.index(d["state"]):
             d["state"] = state
             self.log("display_state", display_state=state, **info)
+            if state == "ready":
+                self._log_hardware_summary()
             if DISPLAY_STATES.index(state) >= DISPLAY_STATES.index("ready"):
                 self.game.maybe_start()
                 self._maybe_start_audio()
@@ -818,6 +835,10 @@ class ControllerSession:
             self._answer_request(ticket, variant, msg, quiet=repeats > 3)
         elif kind == "notification" and variant == "message3":
             self._on_input_rpc(msg.message3)
+        elif kind == "notification" and variant == "notification10":
+            self._on_battery(msg.notification10)
+        elif kind == "notification" and variant == "audio_configuration_changed":
+            self._on_audio_config(msg.audio_configuration_changed)
         elif kind == "response" and rec.get("purpose") == "start_game":
             self.game.on_start_game_response(ticket, rpc)
         elif kind == "response" and rec.get("purpose") == "get_controller_state":
@@ -834,11 +855,17 @@ class ControllerSession:
                 return
             state = p.to_dict(msg.controller_state)
             d["controller_state"] = state
+            headset = _as_bool(state.get("f4"))  # a plug in the jack, as of this snapshot
+            if headset is not None:
+                d["headset"] = headset
+            if not self.serial and isinstance(state.get("f17"), str) and state["f17"].strip():
+                self.serial = state["f17"].strip()  # f17 is the serial too, for when the header never came
             self.log(
                 "display_controller_state",
                 code=rpc.get("code"),
                 device_id=state.get("device_id"),
                 n_fields=len(state),
+                headset=headset,
                 controller_state=state,
             )
             self._set_display_state("controller-state-received")
@@ -852,6 +879,58 @@ class ControllerSession:
         self._last_input = state
         self._set_display_state("input", via="rpc")
         self.emit_input_event(ev)
+
+    # ---- what the controller reports about itself ----------------------------------
+    def _log_hardware_summary(self) -> None:
+        """One line at READY with the controller's self-description (GetControllerStateResponse).
+
+        The battery gauge arrives on its own a few minutes later (``controller_battery``), so it
+        is usually still unknown here.
+        """
+        d = self.session["display"]
+        state = d.get("controller_state") or {}
+        self.log(
+            "controller_hardware",
+            serial=self.serial,
+            manufacturer=state.get("f12"),
+            product=state.get("f14"),
+            hardware=state.get("f15"),
+            firmware=state.get("f16"),
+            headset=d.get("headset"),
+            battery_percent=d.get("battery_percent"),
+        )
+
+    def _on_battery(self, m: Any) -> None:
+        """``ControllerToDisplay`` #10: the charge level as a fraction, 0.0 to 1.0.
+
+        The first sample comes a few minutes after READY, then one step down per percent (0.76,
+        0.75, 0.74 ... every few minutes on a live controller) and never up while it runs on the
+        battery.
+        """
+        d = self.session["display"]
+        level = max(0.0, min(1.0, float(m.value)))
+        pct = round(level * 100)
+        changed = d["battery_percent"] != pct
+        d["battery"] = round(level, 4)
+        d["battery_percent"] = pct
+        d["battery_samples"] += 1
+        self.log("controller_battery", _quiet=not changed, percent=pct, level=round(level, 4), n=d["battery_samples"])
+
+    def _on_audio_config(self, m: Any) -> None:
+        """``ControllerToDisplay`` #4: the audio configuration changed, which means the headset moved.
+
+        ``mode`` 1 is a plug in the 3.5 mm jack, 0 none; the notification comes within a second of
+        the plug going in or out.  ``device_info`` is the controller advertising an audio receiver
+        of its own (its address, a UDP port and a key), see protocol.md §5.
+        """
+        d = self.session["display"]
+        info = self.protos.to_dict(m)
+        mode = info.get("mode")
+        d["audio_mode"] = mode
+        d["audio_events"] += 1
+        if mode in (0, 1):
+            d["headset"] = mode == 1
+        self.log("controller_audio_config", n=d["audio_events"], mode=mode, headset=d["headset"], audio=info)
 
     def _answer_request(self, ticket: int | None, variant: str | None, msg: Any, quiet: bool = False) -> None:
         """Answers for the controller's requests.  The periodic ones only start on entry to

@@ -153,6 +153,31 @@ Sent as an `RpcNotification` whenever something changes; decoded by `stadiacast.
 Bits 0 to 15 are the XInput `wButtons` layout; Stadia maps to the (undocumented) guide bit
 `0x0400`; Assistant and Capture have no XInput equivalent.
 
+### What the controller reports about itself
+
+Three things the controller volunteers once the link is up, all seen on our rig; the receiver
+keeps them in `/_status`.
+
+- **`GetControllerStateResponse`** (the answer to #2) describes the hardware: `f12` the
+  manufacturer (`Google, Inc.`), `f14` the product and region code (`GA00722-GB`), `f15` the
+  hardware build (`gotham_pvt_3`), `f16` the firmware build (`282115`), `f17` the serial
+  number (the one the Omaha request carries too), `f4` whether a plug is in the headset jack
+  at that moment, and `device_info`, the sub-table below. The receiver logs them once as
+  `controller_hardware` when the link reaches READY, and falls back to `f17` for the serial
+  when no `controller-device-id` header came.
+- **The battery gauge, `ControllerToDisplay` #10** (`notification10`, a float): the charge as a
+  fraction. The first sample comes a few minutes after READY, then one step down per percent
+  (0.76, 0.75, 0.74, ... every few minutes on a live controller) and never up while it runs
+  on the battery. `/_status` shows it as `battery_percent`; every change is a
+  `controller_battery` event.
+- **The audio configuration, `ControllerToDisplay` #4** (`audio_configuration_changed`): sent
+  within a second of the headset going in (`mode` 1) or out (`mode` 0); `/_status` shows it
+  as `headset`. Its `device_info` is the controller advertising an audio receiver of its
+  own: `f2` is the controller's IP address, `f6` a UDP port (9989) and `f4` a 16-byte key.
+  That receiver is the path behind `SetAudioMode(mode=4)` (Opus, encrypted with that key); it
+  is reported to stay silent when fed, so the receiver leaves it alone. The route that plays is
+  the next section.
+
 ### Audio to the headset jack
 
 The jack is fed by a normal RTP stream on the ICE pair the handshake selected, not through the
@@ -297,6 +322,8 @@ reboots is matched to its existing session, which is reset; other sessions are u
 - The game session flow of §6, the InitializationResponse string limits, the haptics watchdog.
 - Headset audio: Opus over SRTP on the media 5-tuple, gated by `SetAudioMode(mode=2)`, with
   its own SSRC, heard in the jack on a real controller.
+- The battery gauge (#10) and the headset notification (#4) of §5, both seen live, and the
+  hardware fields of `GetControllerStateResponse`.
 - Omaha and Clearcut message formats.
 - The certificate check: the chain must lead to a GTS root; hostname, validity dates and
   revocation are not checked (§8).

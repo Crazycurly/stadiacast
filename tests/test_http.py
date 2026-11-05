@@ -3,16 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import socket
 
 import pytest
 
+from stadiacast.certs import create_self_signed
 from stadiacast.config import Config
 from stadiacast.http_server import MAX_BODY_BYTES, HttpRequest, HttpResponse, HttpServer
 from stadiacast.log import EventLog
 
 
 async def _serve(tmp_path, handler, **cfg_overrides):
-    cfg = Config(cert="unused", key="unused", bind="127.0.0.1", https_port=None, http_ports=(0,), **cfg_overrides)
+    settings: dict = {"cert": "unused", "key": "unused", "bind": "127.0.0.1", "https_port": None, "http_ports": (0,)}
+    settings.update(cfg_overrides)
+    cfg = Config(**settings)
     log = EventLog(str(tmp_path / "http.jsonl"), echo=False)
     srv = HttpServer(cfg, log, handler, clock=lambda: 1_700_000_000.0)
     await srv.start()
@@ -133,5 +137,32 @@ def test_handler_exceptions_do_not_kill_the_server(tmp_path):
             await srv.stop()
         assert out.endswith(b"fine")
         assert any(r["event"] == "http_conn_error" for r in log.records)
+
+    asyncio.run(run())
+
+
+def test_a_busy_control_port_is_skipped_and_logged(tmp_path):
+    async def run():
+        blocker = socket.socket()
+        blocker.bind(("127.0.0.1", 0))
+        blocker.listen(1)
+        busy = blocker.getsockname()[1]
+        try:
+            srv, log = await _serve(tmp_path, lambda _req: HttpResponse(200, b"ok"), http_ports=(busy, 0))
+            try:
+                assert len(srv.http_ports) == 1 and srv.http_ports[0] != busy
+                assert log.counts["port_busy"] == 1
+                assert next(r for r in log.records if r["event"] == "port_busy")["port"] == busy
+            finally:
+                await srv.stop()
+            # The HTTPS port is the one the controller needs: busy means the receiver cannot start.
+            create_self_signed(str(tmp_path / "lab.crt"), str(tmp_path / "lab.key"), days=1)
+            cfg = Config(
+                cert=str(tmp_path / "lab.crt"), key=str(tmp_path / "lab.key"), bind="127.0.0.1", https_port=busy
+            )
+            with pytest.raises(OSError, match="cannot listen"):
+                await HttpServer(cfg, EventLog(None, echo=False), lambda _req: HttpResponse(200, b"ok")).start()
+        finally:
+            blocker.close()
 
     asyncio.run(run())

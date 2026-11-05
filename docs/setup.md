@@ -197,6 +197,10 @@ Events worth knowing when something does not work:
 | `rumble_refresh_failed` | the game session dropped while a rumble was held |
 | `audio_start_failed` | `--audio-source` was set but the stream could not start: no ffmpeg with libopus on `PATH`, or the source was refused |
 | `audio_source_invalid` | the `--audio-source` spelling is not `tone` or `file:PATH` |
+| `controller_hardware` | one line at READY with what the controller says about itself: product, hardware and firmware builds, serial, headset |
+| `controller_battery` | the battery gauge moved (`percent`); it steps down one percent at a time |
+| `controller_audio_config` | the headset was plugged in or pulled (`headset`) |
+| `port_busy` | port 80 or 8008 is held by another program; the receiver goes on without it, 443 is the only port the controller needs |
 
 ## Wi-Fi provisioning over Bluetooth
 
