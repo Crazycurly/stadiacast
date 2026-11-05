@@ -26,6 +26,7 @@ class Config:
     # -- certificate -----------------------------------------------------------------------
     cert: str
     key: str
+    cert_given: bool = False  # --cert/--key were passed: a missing file is an error, never the built-in credential
     self_signed: bool = False  # generate a lab pair when cert/key are missing (tests only: the controller rejects it)
     clock_pin: str | None = None  # None | "auto" (midpoint of the cert window) | ISO date served to the controller
 

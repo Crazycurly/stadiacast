@@ -44,8 +44,16 @@ def build_parser(preset: str | None = None) -> argparse.ArgumentParser:
     ap.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
 
     g = ap.add_argument_group("certificate")
-    g.add_argument("--cert", default=DEFAULT_CERT, help=f"PEM certificate chain (default {DEFAULT_CERT})")
-    g.add_argument("--key", default=DEFAULT_KEY, help=f"PEM private key (default {DEFAULT_KEY})")
+    g.add_argument(
+        "--cert",
+        default=None,
+        help=f"PEM certificate chain (default: {DEFAULT_CERT} when present, else the built-in credential)",
+    )
+    g.add_argument(
+        "--key",
+        default=None,
+        help=f"PEM private key (default: {DEFAULT_KEY} when present, else the built-in credential)",
+    )
     g.add_argument(
         "--self-signed",
         action="store_true",
@@ -287,8 +295,9 @@ def parse_args(argv: Sequence[str] | None = None) -> Config:
         with open(a.offer_json, encoding="utf-8") as fh:
             overrides = json.load(fh)
     return Config(
-        cert=a.cert,
-        key=a.key,
+        cert=a.cert or DEFAULT_CERT,
+        key=a.key or DEFAULT_KEY,
+        cert_given=a.cert is not None or a.key is not None,
         self_signed=a.self_signed,
         clock_pin=None if a.clock_pin == "real" else a.clock_pin,
         bind=a.bind,

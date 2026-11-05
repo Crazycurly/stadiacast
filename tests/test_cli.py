@@ -27,7 +27,8 @@ def test_preset_live_is_the_proven_configuration_and_flags_override_it():
     assert cfg.clearcut_block == "off" and cfg.gmsg_hold == 5.0 and cfg.sntp is False
     cfg = parse_args([])
     assert cfg.preset is None and cfg.clearcut_block == "off" and cfg.gmsg_hold == 0.0
-    assert (cfg.cert, cfg.key) == (DEFAULT_CERT, DEFAULT_KEY)
+    assert (cfg.cert, cfg.key, cfg.cert_given) == (DEFAULT_CERT, DEFAULT_KEY, False)
+    assert parse_args(["--cert", "x.pem"]).cert_given is True
     assert cfg.http_ports == (80, 8008) and cfg.dns_redirect == ("time.google.com",)
 
 

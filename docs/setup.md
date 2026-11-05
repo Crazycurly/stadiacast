@@ -59,10 +59,26 @@ interpreter binary (`setcap cap_net_bind_service=+ep` on the file `.venv/bin/pyt
 ## Certificate
 
 The firmware validates the server chain against its built-in **Google Trust Services (GTS)**
-roots and never checks the hostname, so a GTS certificate for any domain you own works for
-every name the receiver impersonates. Self-signed certificates are rejected with the TLS alert
-`unknown_ca`; the tests use one anyway (`--self-signed`) because the fake controller does not
-check.
+roots and checks nothing else about it: not the hostname, not the validity dates, not
+revocation (all three confirmed on a real controller). Self-signed certificates are rejected
+with the TLS alert `unknown_ca`; the tests use one anyway (`--self-signed`) because the fake
+controller does not check.
+
+**The built-in credential.** The receiver ships a GTS chain together with its key, so there is
+nothing to obtain: with no certificate configured it serves that one, and the controller
+accepts it. The certificate was issued over ACME for a domain registered for this project and
+then revoked, with reason key compromise, before the key was published. Browsers and TLS
+libraries reject a revoked and soon expired certificate on sight, and GTS will never issue
+another certificate for that key, so the credential is exactly enough for the controller and
+useless for anything else. The receiver logs a `builtin_credential` event with its subject,
+issuer and serial whenever it serves it.
+
+**Bringing your own.** A fork, a hosted deployment or anyone who prefers a certificate in their
+own name passes `--cert` (PEM chain, leaf first) and `--key`, or puts the pair under `certs/`
+as `fullchain.pem` and `privkey.pem`; existing files there win over the built-in credential.
+Naming a file that does not exist is an error, never a silent fallback. Any GTS-issued chain
+works for every name the receiver impersonates, and the rest of this section is how to get one
+for free.
 
 You need a domain name whose DNS records you can edit: the ACME challenge below is a TXT
 record. Google's public CA issues certificates for free over ACME, with External Account
@@ -93,13 +109,17 @@ check the certificate's validity dates (confirmed on a real controller). Issue t
 once and keep the two files. `--clock-pin` is unrelated to this: it serves the controller a
 chosen clock when you want one.
 
-**The certificate's terms.** The receiver serves this certificate for Google's host names,
-not for the domain it was issued to. Google Trust Services' policy (CPS §9.6.3) has
-subscribers install TLS certificates only on servers reachable at the names in the
-certificate, and the CA revokes certificates whose subscriber breaches the agreement. Use a
-domain name dedicated to the receiver, so that a revocation would affect nothing else.
-Whether the firmware checks revocation at all has not been tested; it checks neither the
-hostname nor the validity dates.
+**The certificate's terms.** The receiver serves a certificate for Google's host names, not
+for the domain it was issued to. Google Trust Services' policy (CPS §9.6.3) has subscribers
+install TLS certificates only on servers reachable at the names in the certificate, and the CA
+revokes certificates whose subscriber breaches the agreement. The built-in credential was
+issued for a domain dedicated to the project and revoked before publication, so no valid
+certificate is involved and a revocation can affect nothing. If you issue your own, use a
+domain name dedicated to the receiver for the same reason. The firmware does not check
+revocation (confirmed on a real controller: a certificate revoked at Google Trust Services
+with reason keyCompromise was accepted exactly as before, through boot, autolink, input and
+rumble, and the controller fetched no CRL and sent no OCSP request), nor the hostname, nor the
+validity dates.
 
 ## Running
 

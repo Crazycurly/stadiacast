@@ -203,8 +203,12 @@ the serial HTTP client from sending `ResolveDiscovery`.
 The firmware syncs its clock from `time.google.com` over SNTP (the receiver's SNTP server
 answers with the host clock), and from the HTTP `Date` header and `GetCurrentTime` replies.
 It does not check the server certificate's validity dates (confirmed on a real controller),
-only that the chain leads to a GTS root. `--clock-pin auto|ISO-DATE` serves a chosen time
-instead of the real one (for example the midpoint of the certificate's validity window).
+only that the chain leads to a GTS root. Revocation is not checked either: the ClientHello
+carries no `status_request` extension, no CRL or OCSP traffic has ever been seen, and a
+certificate revoked at the CA with reason keyCompromise was accepted exactly like a valid one
+(confirmed on a real controller through boot, autolink, input and rumble). `--clock-pin
+auto|ISO-DATE` serves a chosen time instead of the real one (for example the midpoint of the
+certificate's validity window).
 
 ## 9. The `live` preset
 
@@ -262,6 +266,8 @@ reboots is matched to its existing session, which is reset; other sessions are u
   display token echoed as the GMsg subscription.
 - The game session flow of §6, the InitializationResponse string limits, the haptics watchdog.
 - Omaha and Clearcut message formats.
+- The certificate check: the chain must lead to a GTS root; hostname, validity dates and
+  revocation are not checked (§8).
 
 **Assumed (logged as `assumption=` on the record; changed with flags):**
 

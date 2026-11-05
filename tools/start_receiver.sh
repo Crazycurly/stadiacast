@@ -36,10 +36,6 @@ if pgrep -f -- '-m stadiacast( |$)|bin/stadiacast( |$)' >/dev/null; then
   echo "a receiver is already running; stop it first: tools/stop_receiver.sh" >&2
   exit 1
 fi
-if [ ! -f certs/fullchain.pem ] || [ ! -f certs/privkey.pem ]; then
-  echo "certs/fullchain.pem and certs/privkey.pem are missing; see certs/README.md and docs/setup.md" >&2
-  exit 1
-fi
 
 RUN=captures/$(date +%Y%m%d-%H%M%S)
 mkdir -p "$RUN"

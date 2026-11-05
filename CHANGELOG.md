@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- A built-in credential: the receiver now starts with no certificate configured and serves a
+  Google Trust Services chain that the controller accepts, issued for a domain dedicated to the
+  project and revoked before publication. `--cert`/`--key` and a pair under `certs/` take
+  precedence, so forks and hosted deployments keep serving their own; `tools/pack_credential.py`
+  builds the bundle.
+
+### Changed
+- `docs/protocol.md` and `docs/setup.md` record that the firmware does not check certificate
+  revocation (confirmed on a real controller).
+- `tools/start_receiver.sh` no longer insists on a pair under `certs/`: without one, the
+  receiver serves the built-in credential.
+
 ## [0.1.0] - 2026-10-29
 
 First public version of Stadiacast: a LAN-side stand-in for the Stadia cloud endpoints that

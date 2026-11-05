@@ -39,8 +39,8 @@ account, and nothing leaves your LAN.
    spawns a small DNS server that points the Google names it needs at itself and forwards
    everything else upstream.
 2. **HTTPS.** The firmware validates the server certificate against its built-in Google Trust
-   Services roots and never checks the hostname, so a free GTS certificate for any domain you
-   own lets the receiver answer every Google name.
+   Services roots and checks neither the hostname, nor the dates, nor revocation, so one GTS
+   chain, the one the receiver ships, lets it answer every Google name.
 3. **WebRTC.** The controller offers a WebRTC session in its `DiscoverDisplay` request; the
    receiver answers over the GMsg push channel, terminates STUN and DTLS, and plays the
    display side of the post-DTLS RPC handshake until the controller reaches READY and starts
@@ -63,9 +63,9 @@ together.
 - A macOS or Linux host on the controller's network. The reference rig is a macOS Internet
   Sharing hotspot (macOS lets an unprivileged process bind ports 53, 80, 123 and 443; on Linux
   you need root or `CAP_NET_BIND_SERVICE`).
-- A certificate chain issued by Google Trust Services for a domain you own. It is free and
-  never needs renewing, because the firmware does not check the validity dates; see
-  [docs/setup.md](docs/setup.md#certificate).
+- No certificate to obtain: the receiver ships a chain issued by Google Trust Services that
+  the controller accepts, and it never needs renewing because the firmware does not check the
+  validity dates. Serving your own is optional; see [docs/setup.md](docs/setup.md#certificate).
 - Optional: `tcpdump` for packet captures, the `ble` extra for first-time Wi-Fi provisioning
   over Bluetooth, the `passthrough` extra to proxy the `stadiaconfig` request to Google.
 
@@ -93,8 +93,8 @@ This installs three commands: `stadiacast`, `stadiacast-show-input` and
 1. **Network.** Put the controller and the receiver on one network where the receiver is the
    controller's DNS server. The simplest way is a hotspot hosted by the receiver's machine
    ([docs/setup.md](docs/setup.md#network)).
-2. **Certificate.** Copy your GTS chain to `certs/fullchain.pem` and its key to
-   `certs/privkey.pem` ([how to get one](docs/setup.md#certificate)). They are ignored by git.
+2. **Certificate.** Nothing to do: the receiver ships one. To serve your own instead, pass
+   `--cert`/`--key` or put the pair under `certs/` ([details](docs/setup.md#certificate)).
 3. **First boot only: Wi-Fi provisioning.** A controller fresh out of the box, or one that was
    reset, waits in Bluetooth setup mode for its Wi-Fi credentials:
 
@@ -166,7 +166,7 @@ and triggers (0 to 255). Bits 0 to 15 of the button mask are the XInput `wButton
 | `src/stadiacast/protos.py` | runtime access to the protobuf schemas, the GMsg and RPC envelopes, a schema-less wire dumper |
 | `src/stadiacast/input_protocol.py` | the `InputProtocolMessage` stream decoder (input on the game session) |
 | `src/stadiacast/gamepad.py` | input report layout, button names, XInput conversion |
-| `src/stadiacast/certs.py` | certificate handling (the served chain, the lab pair, the clock pin) |
+| `src/stadiacast/certs.py` | certificate handling (the built-in credential, your own chain, the lab pair, the clock pin) |
 | `src/stadiacast/log.py` | the JSON Lines event log |
 | `src/stadiacast/ble_provisioner.py` | BLE Wi-Fi provisioning (`stadiacast-provision`) |
 | `src/stadiacast/show_input.py` | run summary (`stadiacast-show-input`) |
@@ -175,7 +175,7 @@ and triggers (0 to 255). Bits 0 to 15 of the button mask are the XInput `wButton
 | `tests/` | unit and end-to-end tests; `fake_controller.py` stands in for the controller |
 | `tools/` | `start_receiver.sh`, `stop_receiver.sh` |
 | `docs/` | setup guide, protocol notes, architecture overview |
-| `certs/`, `captures/` | your certificate and run directories (both ignored by git) |
+| `certs/`, `captures/` | your own certificate (optional) and run directories (both ignored by git) |
 
 ## Development
 
