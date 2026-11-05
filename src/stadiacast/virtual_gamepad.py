@@ -203,8 +203,11 @@ class VirtualGamepads:
         try:
             import vgamepad  # noqa: F401
         except ImportError as e:
+            raise RuntimeError("--gamepad vigem needs the gamepad extra: pip install 'stadiacast[gamepad]'") from e
+        except RuntimeError as e:  # vgamepad connects to the bus on import; no driver, no import
             raise RuntimeError(
-                "--gamepad vigem needs the gamepad extra (pip install 'stadiacast[gamepad]') and the ViGEmBus driver"
+                f"--gamepad vigem needs the ViGEmBus driver installed (vgamepad said: {e}); "
+                "get it from https://github.com/nefarius/ViGEmBus/releases"
             ) from e
         return cls(cfg, log, rx, ViGEmPad)
 

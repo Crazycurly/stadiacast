@@ -134,3 +134,18 @@ def test_the_vigem_backend_is_windows_only_and_the_flags_parse() -> None:
     with pytest.raises(ValueError, match="unknown --gamepad"):
         VirtualGamepads.create(Config(cert="x", key="y", gamepad="bogus"), EventLog(None, echo=False), None)  # type: ignore[arg-type]
     assert set(BUTTON_BITS) == {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15}
+
+
+def test_a_missing_driver_or_extra_is_a_clear_error(tmp_path, monkeypatch) -> None:
+    """On Windows, importing vgamepad connects to the ViGEm bus: without the driver the import itself
+    raises. Both that and a missing package end in a message saying what to install."""
+    monkeypatch.setattr(sys, "platform", "win32")
+    (tmp_path / "vgamepad.py").write_text("raise RuntimeError('Error: VIGEM_ERROR_BUS_NOT_FOUND')\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.delitem(sys.modules, "vgamepad", raising=False)
+    cfg = Config(cert="x", key="y", gamepad="vigem")
+    with pytest.raises(RuntimeError, match="ViGEmBus driver installed .*BUS_NOT_FOUND"):
+        VirtualGamepads.create(cfg, EventLog(None, echo=False), None)  # type: ignore[arg-type]
+    monkeypatch.setitem(sys.modules, "vgamepad", None)
+    with pytest.raises(RuntimeError, match="gamepad extra"):
+        VirtualGamepads.create(cfg, EventLog(None, echo=False), None)  # type: ignore[arg-type]

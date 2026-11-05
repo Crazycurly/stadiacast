@@ -4,6 +4,7 @@
 # when the platform has them) and ``stadiacast-provision`` (Wi-Fi provisioning over Bluetooth).
 # ffmpeg is not bundled: the audio sources find it on PATH.
 
+import importlib.util
 import sys
 from pathlib import Path
 
@@ -18,9 +19,8 @@ hiddenimports = collect_submodules("stadiacast")  # the helpers are referenced b
 
 optional_datas, optional_libs = [], []
 for package in ("vgamepad", "pyaudiowpatch", "sounddevice"):
-    try:
-        __import__(package)
-    except ImportError:
+    # find_spec, not an import: importing vgamepad connects to the ViGEm bus and fails without the driver
+    if importlib.util.find_spec(package) is None:
         continue
     optional_datas += collect_data_files(package)
     optional_libs += collect_dynamic_libs(package)
