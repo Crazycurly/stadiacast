@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.15'",
@@ -1275,6 +1275,23 @@ wheels = [
 ]
 
 [[package]]
+name = "pyaudiowpatch"
+version = "0.2.12.9"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c6/7b/6b42798a26042c0c904207d759d871fd4b168a45a107465508aad90a9ffe/pyaudiowpatch-0.2.12.9-cp311-cp311-win32.whl", hash = "sha256:0cf14a1945e53ab64e2f3d89a899563c5af02a0869a4d17ea0c6f27f321788d6", size = 97669, upload-time = "2026-10-06T16:13:13.394Z" },
+    { url = "https://files.pythonhosted.org/packages/47/72/a4e7496e70bbf1c279ac571654654789a7f752a6600ee07dedb1cca69768/pyaudiowpatch-0.2.12.9-cp311-cp311-win_amd64.whl", hash = "sha256:46aacc940069157b80d5ba07159f2d86c3a560ae8c1878091802f8b223377f7a", size = 99878, upload-time = "2026-10-06T16:13:14.852Z" },
+    { url = "https://files.pythonhosted.org/packages/fa/a3/acb33103ec3bf1be0255bf423791d3ffcb4c194a1d2b66aaceb311bc8269/pyaudiowpatch-0.2.12.9-cp312-cp312-win32.whl", hash = "sha256:ac7d187b2c470bc5c76cbc9e30c8127564fc3a653fcae9c820d6b3ddf417b6e4", size = 97853, upload-time = "2026-10-06T16:13:16.214Z" },
+    { url = "https://files.pythonhosted.org/packages/4f/4a/b3040ab051c3d2ee6b123e67db7a3e980fbf8e71f9d3b822366e8b380eb2/pyaudiowpatch-0.2.12.9-cp312-cp312-win_amd64.whl", hash = "sha256:963376e94f46c84e994eda4d25ffd62b712881ad5d611a4f4433bb5aa0bf7fa4", size = 100137, upload-time = "2026-10-06T16:13:17.67Z" },
+    { url = "https://files.pythonhosted.org/packages/ca/02/542a39af9f7ee589d039ed41714539ff7db08541256deaf0c04f64c5a213/pyaudiowpatch-0.2.12.9-cp313-cp313-win32.whl", hash = "sha256:f747213885420a6b46f5d4d8dd0b441c14591893e3fcc740d2f0961bb16c2b4c", size = 97844, upload-time = "2026-10-06T16:13:18.96Z" },
+    { url = "https://files.pythonhosted.org/packages/89/d7/2cf4d426d823e0931dd8830ed0751570997fba92d2596b25c22bd842b1da/pyaudiowpatch-0.2.12.9-cp313-cp313-win_amd64.whl", hash = "sha256:aaa847f5f76e11b42242b51293d872f811ab8925146c34ca79f21c9b18bda551", size = 100127, upload-time = "2026-10-06T16:13:20.602Z" },
+    { url = "https://files.pythonhosted.org/packages/e7/5c/c45444bc928b6c40e2c36af9f2f721bb7ad3057debffe50f34e4081ab5d8/pyaudiowpatch-0.2.12.9-cp314-cp314-win32.whl", hash = "sha256:85b011276c882c6d302425a0a5d6bb3f00be45ef80a6c362d04b8d7234f5f5de", size = 99764, upload-time = "2026-10-06T16:13:22.148Z" },
+    { url = "https://files.pythonhosted.org/packages/87/4e/ce82cdfdcc37eadb7f405f278182d6b8bb8f6a7d177c83537ddfd53aee24/pyaudiowpatch-0.2.12.9-cp314-cp314-win_amd64.whl", hash = "sha256:dc3ae964530ffe70119a1e2f5b76c661b676aa1cf1b9755d8ecafe081ee85f53", size = 101621, upload-time = "2026-10-06T16:13:23.518Z" },
+    { url = "https://files.pythonhosted.org/packages/94/8e/fe6a70dac52966fe54d34aea4373deb8ac3226e27b96641a78bf0d716ae7/pyaudiowpatch-0.2.12.9-cp315-cp315-win32.whl", hash = "sha256:f76cdf7dd0a9deb74e95f0e9f04c2af0898eb055e1d3572bed0eb75a37de03dd", size = 99789, upload-time = "2026-10-06T16:13:24.806Z" },
+    { url = "https://files.pythonhosted.org/packages/06/9e/583c053cc5580b07a2a3ff4511bce40be32167c56b948893b728b5260d31/pyaudiowpatch-0.2.12.9-cp315-cp315-win_amd64.whl", hash = "sha256:81d51b5b88c9e2124c33d0f9f22bf51392b93a4328f34e135e861e0c2c953c7f", size = 101620, upload-time = "2026-10-06T16:13:26.186Z" },
+]
+
+[[package]]
 name = "pycparser"
 version = "3.12"
 source = { registry = "https://pypi.org/simple" }
@@ -1436,6 +1453,19 @@ wheels = [
 ]
 
 [[package]]
+name = "sounddevice"
+version = "0.5.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cffi" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ec/db/0c890e2d9aab9ba284021efc02e1d3aebfecab1b611762d7434602209bcf/sounddevice-0.5.6.tar.gz", hash = "sha256:8ec9fbfde2e32f020b167e348f3ab3bac6625a5f15af524d790108ac7147a410", size = 1120094, upload-time = "2026-08-17T07:55:05.048Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/72/1f/62eef605172bddc1017508469a12f75bc7c4194ece35c734f822795f53b1/sounddevice-0.5.6-py3-none-any.whl", hash = "sha256:de099612311ad81e55d31ccbd83f43ea6bf4d87b48f9b6ea55a1fbcde0eee4e0", size = 32793, upload-time = "2026-08-17T07:54:57.507Z" },
+    { url = "https://files.pythonhosted.org/packages/b6/84/85e719d49cf98b2f406d9ac9c338892286c4448eb42ef0b2625ccf159616/sounddevice-0.5.6-py3-none-macosx_10_6_x86_64.macosx_10_6_universal2.whl", hash = "sha256:e3aef00ad8b1d1740eb66d9a7671eab88a4d2b8fa4ab33498d742e63b65c309c", size = 1009647, upload-time = "2026-08-17T07:54:58.814Z" },
+]
+
+[[package]]
 name = "stadiacast"
 source = { editable = "." }
 dependencies = [
@@ -1445,6 +1475,10 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+audio = [
+    { name = "pyaudiowpatch", marker = "sys_platform == 'win32'" },
+    { name = "sounddevice", marker = "sys_platform != 'win32'" },
+]
 ble = [
     { name = "bleak" },
 ]
@@ -1467,9 +1501,11 @@ requires-dist = [
     { name = "bleak", marker = "extra == 'ble'", specifier = ">=0.21" },
     { name = "cryptography", specifier = ">=42" },
     { name = "protobuf", specifier = ">=4.25" },
+    { name = "pyaudiowpatch", marker = "sys_platform == 'win32' and extra == 'audio'", specifier = ">=0.2.12" },
     { name = "pyopenssl", specifier = ">=23.2" },
+    { name = "sounddevice", marker = "sys_platform != 'win32' and extra == 'audio'", specifier = ">=0.4.6" },
 ]
-provides-extras = ["ble", "passthrough"]
+provides-extras = ["audio", "ble", "passthrough"]
 
 [package.metadata.requires-dev]
 dev = [

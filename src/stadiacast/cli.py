@@ -8,6 +8,7 @@ import json
 import signal
 import sys
 from collections.abc import Sequence
+from typing import Any
 
 from stadiacast import __version__
 from stadiacast.config import PRESETS, Config
@@ -21,6 +22,19 @@ DEFAULT_KEY = "certs/privkey.pem"
 
 def _csv(value: str) -> tuple[str, ...]:
     return tuple(p.strip() for p in value.split(",") if p.strip())
+
+
+class _ListAudioDevices(argparse.Action):
+    """``--audio-devices``: print the capture devices of this computer and exit, like ``--version``."""
+
+    def __call__(self, parser: argparse.ArgumentParser, *_args: Any, **_kw: Any) -> None:
+        from stadiacast.capture import list_devices
+
+        try:
+            names = list_devices()
+        except RuntimeError as e:
+            parser.exit(2, f"stadiacast: {e}\n")
+        parser.exit(0, "".join(f"{name}\n" for name in names) or "no capture devices found\n")
 
 
 def build_parser(preset: str | None = None) -> argparse.ArgumentParser:
@@ -174,9 +188,22 @@ def build_parser(preset: str | None = None) -> argparse.ArgumentParser:
     g.add_argument(
         "--audio-source",
         default="",
-        help="send audio to the headset jack once the link is READY: '' (off), tone or file:PATH",
+        help="send audio to the headset jack once the link is READY: '' (off), tone, file:PATH, "
+        "system (what this computer plays) or device:NAME (see --audio-devices)",
     )
     g.add_argument("--audio-bitrate", type=int, default=64, help="Opus bitrate in kbit/s")
+    g.add_argument(
+        "--audio-volume",
+        type=float,
+        default=1.0,
+        help="gain before encoding (1 = as captured; above 1 a limiter guards against clipping)",
+    )
+    g.add_argument(
+        "--audio-devices",
+        nargs=0,
+        action=_ListAudioDevices,
+        help="list the capture devices device:NAME accepts on this computer, then exit",
+    )
     g.add_argument(
         "--audio-mode",
         type=int,
@@ -343,6 +370,7 @@ def parse_args(argv: Sequence[str] | None = None) -> Config:
         input_payload_type=a.input_payload_type,
         audio_source=a.audio_source,
         audio_bitrate_kbps=a.audio_bitrate,
+        audio_volume=a.audio_volume,
         audio_mode=a.audio_mode,
         display_rpc=a.display_rpc,
         display_rpc_trigger=a.display_rpc_trigger,

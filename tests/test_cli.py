@@ -74,3 +74,8 @@ def test_version_flag(capsys):
         parse_args(["--version"])
     assert exc.value.code == 0
     assert capsys.readouterr().out.strip() == f"stadiacast {__version__}"
+
+
+def test_audio_flags():
+    cfg = parse_args(["--audio-source", "system", "--audio-volume", "0.5"])
+    assert (cfg.audio_source, cfg.audio_volume) == ("system", 0.5)

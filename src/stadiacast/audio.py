@@ -36,6 +36,7 @@ RTP muxer gives frame boundaries for free and the local UDP hop costs under a mi
 
 from __future__ import annotations
 
+import array
 import asyncio
 import collections
 import contextlib
@@ -46,6 +47,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from stadiacast import capture
 from stadiacast.rtc.rtp import build_rtp, parse_rtp
 
 #: Samples per Opus frame at 48 kHz: one 20 ms frame. RTP timestamps step by this.
@@ -99,6 +101,34 @@ class Source:
 
     args: list[str]
     label: str
+    #: ``args`` end in ``-i pipe:0``: a capture thread hands PCM to the sender, which writes it to
+    #: ffmpeg's stdin (Windows loopback, which ffmpeg cannot open itself).
+    pcm: bool = False
+    #: Opens that capture: an object with ``start()``, ``stop()``, ``read(timeout)`` and
+    #: ``name``/``rate``/``channels``. One per ffmpeg run, since a thread is not restartable.
+    open_capture: Callable[[], Any] | None = None
+
+    @staticmethod
+    def system() -> Source:
+        """What this computer plays: the platform's loopback (see :mod:`stadiacast.capture`)."""
+        return Source.device(None)
+
+    @staticmethod
+    def device(name: str | None) -> Source:
+        """A capture device by name (``device:NAME``), or the platform's loopback when ``None``.
+
+        Always a PCM pipe into ffmpeg: WASAPI loopback on Windows (:mod:`stadiacast.loopback`),
+        PortAudio elsewhere (:mod:`stadiacast.capture`).
+        """
+        if sys.platform == "win32":
+            from stadiacast import loopback
+
+            dev = loopback.describe(name)
+            args = ["-f", "s16le", "-ar", str(dev.rate), "-ac", str(dev.channels), "-i", "pipe:0"]
+            return Source(args, f"capture {dev.name}", pcm=True, open_capture=lambda: loopback.Capture(dev))
+        dev_name, rate, channels, open_capture = capture.open_portaudio(name)
+        args = ["-f", "s16le", "-ar", str(rate), "-ac", str(channels), "-i", "pipe:0"]
+        return Source(args, f"capture {dev_name}", pcm=True, open_capture=open_capture)
 
     @staticmethod
     def test_tone(hz: float = 440.0, duration: float | None = None) -> Source:
@@ -145,6 +175,8 @@ class AudioStats:
     trimmed: int = 0
     gap_ms_last: float = 0.0
     gap_ms_max: float = 0.0
+    #: Peak of the last PCM block fed to ffmpeg, 0 to 1: shows whether the gain is doing anything.
+    level: float = 0.0
     notes: list[str] = field(default_factory=list)
 
     def snapshot(self) -> dict[str, Any]:
@@ -163,6 +195,7 @@ class AudioStats:
             "trimmed": self.trimmed,
             "gap_ms_last": self.gap_ms_last,
             "gap_ms_max": round(self.gap_ms_max, 1),
+            "level": round(self.level, 3),
             "notes": self.notes[-6:],
         }
 
@@ -201,6 +234,7 @@ class AudioSender:
         ssrc: int | None = None,
         bitrate_kbps: int = 64,
         srtp: bool = True,
+        volume: float = 1.0,
     ) -> None:
         self.endpoint = endpoint
         self.log = log or (lambda *_a, **_k: None)
@@ -211,6 +245,11 @@ class AudioSender:
         #: Audio gets its own SSRC: ``endpoint.local_ssrc`` belongs to the input ACKs.
         self.ssrc = ssrc if ssrc is not None else (0x51A00000 | (int(time.time()) & 0xFFFF))
         self.bitrate_kbps = bitrate_kbps
+        #: Linear gain applied before encoding; above 1 a limiter guards against clipping.
+        self.volume = volume
+        #: Windows only: scale a loopback capture by the endpoint volume, so the slider and the
+        #: media keys reach the headset (loopback hands over the mix before that attenuation).
+        self.follow_system_volume = True
         #: libopus ``-application``: ``lowdelay`` for games, ``audio`` for music.
         self.application = "lowdelay"
         self.queue_target = QUEUE_TARGET
@@ -222,6 +261,11 @@ class AudioSender:
         self._port: int | None = None
         self._task: asyncio.Task[None] | None = None
         self._pacer: asyncio.Task[None] | None = None
+        self._feed: asyncio.Task[None] | None = None
+        self._capture: Any = None
+        self._sysvol = 1.0
+        self._sysvol_at = 0.0
+        self._sysvol_warned = False
         self._q: collections.deque[tuple[bytes, bool]] = collections.deque(maxlen=QUEUE_MAX)
         self._running = False
         self._last_send_at = 0.0
@@ -273,7 +317,7 @@ class AudioSender:
         return {"playing": False, "stats": self.stats.snapshot()}
 
     async def _cancel_tasks(self) -> None:
-        for name in ("_task", "_pacer"):
+        for name in ("_feed", "_task", "_pacer"):
             task = getattr(self, name)
             if task is None:
                 continue
@@ -295,11 +339,12 @@ class AudioSender:
         """Tear down without awaiting: the event loop is going away."""
         self._running = False
         self._release_timer()
-        for name in ("_task", "_pacer"):
+        for name in ("_feed", "_task", "_pacer"):
             task = getattr(self, name)
             if task is not None:
                 task.cancel()
                 setattr(self, name, None)
+        self._stop_capture()
         proc, self._proc = self._proc, None
         if proc is not None and proc.returncode is None:
             with contextlib.suppress(ProcessLookupError):
@@ -309,15 +354,25 @@ class AudioSender:
             self._transport = None
 
     # ---- ffmpeg --------------------------------------------------------------
+    def _af_args(self) -> list[str]:
+        """The gain before encoding. The protocol has no volume field and the controller only
+        knows its physical keys, so loudness is set here; a limiter keeps a raised gain from clipping."""
+        v = float(self.volume)
+        if abs(v - 1.0) < 1e-3:
+            return []
+        chain = f"volume={v:.4f}"
+        if v > 1.0:
+            chain += ",alimiter=limit=0.98"
+        return ["-af", chain]
+
     def _ffmpeg_cmd(self, exe: str, source: Source) -> list[str]:
+        # -nostdin and an input on stdin exclude each other: the PCM pipe goes without it.
+        head = [exe, "-hide_banner", "-loglevel", "warning"] + ([] if source.pcm else ["-nostdin"])
         return [
-            exe,
-            "-hide_banner",
-            "-loglevel",
-            "warning",
-            "-nostdin",
+            *head,
             # No -re here: the pacer owns the timing, each source paces itself.
             *source.args,
+            *self._af_args(),
             "-ac",
             "2",
             "-ar",
@@ -346,7 +401,7 @@ class AudioSender:
             try:
                 self._proc = await asyncio.create_subprocess_exec(
                     *self._ffmpeg_cmd(exe, source),
-                    stdin=asyncio.subprocess.DEVNULL,
+                    stdin=asyncio.subprocess.PIPE if source.pcm else asyncio.subprocess.DEVNULL,
                     stdout=asyncio.subprocess.DEVNULL,  # ffmpeg prints the SDP there
                     stderr=asyncio.subprocess.PIPE,
                 )
@@ -355,12 +410,20 @@ class AudioSender:
                 self.log("audio_ffmpeg_spawn_failed", error=repr(e))
                 await asyncio.sleep(2.0)
                 continue
+            if source.pcm and self._proc.stdin is not None:
+                self._feed = asyncio.get_running_loop().create_task(self._feed_pcm(self._proc.stdin, source))
             err = b""
             if self._proc.stderr is not None:
                 with contextlib.suppress(Exception):
                     err = await self._proc.stderr.read()
             code = await self._proc.wait()
             self._proc = None
+            feed, self._feed = self._feed, None
+            if feed is not None:
+                feed.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await feed
+            self._stop_capture()
             if not self._running:
                 return
             tail = err.decode("utf-8", "replace").strip().splitlines()[-4:]
@@ -382,6 +445,85 @@ class AudioSender:
         if proc.returncode is None:
             with contextlib.suppress(ProcessLookupError):
                 proc.kill()
+
+    # ---- the PCM pipe (Windows loopback) ---------------------------------------
+    async def _feed_pcm(self, stdin: asyncio.StreamWriter, source: Source) -> None:
+        """Write the capture's PCM blocks to ffmpeg's stdin, scaled by the system volume."""
+        try:
+            cap = source.open_capture() if source.open_capture else None
+            if cap is None:
+                raise RuntimeError("the PCM source has no capture to open")
+            cap.start()
+        except Exception as e:
+            self.stats.notes.append(f"capture failed: {e!r}")
+            self.log("audio_capture_failed", error=repr(e))
+            return
+        self._capture = cap
+        self.log("audio_capture", device=cap.name, rate=cap.rate, channels=cap.channels)
+        try:
+            while self._running:
+                chunk = await asyncio.to_thread(cap.read, 0.5)
+                if chunk is None:  # the capture ended (cap.error says why)
+                    self.stats.notes.append(f"capture ended: {getattr(cap, 'error', None)!r}")
+                    self.log("audio_capture_ended", error=getattr(cap, "error", None))
+                    return
+                if not chunk:
+                    continue
+                scaled = self._scale_pcm(chunk, self._system_gain())
+                self._note_level(scaled)
+                stdin.write(scaled)
+                await stdin.drain()
+        except (BrokenPipeError, ConnectionResetError):
+            return  # ffmpeg went away; the supervisor restarts it
+        finally:
+            self._stop_capture()
+            with contextlib.suppress(Exception):
+                stdin.close()
+
+    def _stop_capture(self) -> None:
+        cap, self._capture = self._capture, None
+        if cap is not None:
+            with contextlib.suppress(Exception):
+                cap.stop()
+
+    def _system_gain(self) -> float:
+        """Windows' endpoint volume as a gain, read every 0.4 s; 1.0 elsewhere or when unreadable."""
+        if not self.follow_system_volume or sys.platform != "win32":
+            return 1.0
+        now = time.monotonic()
+        if now - self._sysvol_at >= 0.4:
+            self._sysvol_at = now
+            from stadiacast import sysvolume
+
+            value = sysvolume.master_scalar()
+            if value is not None and sysvolume.muted():
+                value = 0.0  # mute is a switch of its own, the slider need not be at zero
+            if value is None:
+                if not self._sysvol_warned:
+                    self._sysvol_warned = True
+                    self.stats.notes.append("the Windows volume could not be read; streaming at full volume")
+                value = 1.0
+            self._sysvol = value
+        return self._sysvol
+
+    @staticmethod
+    def _scale_pcm(chunk: bytes, gain: float) -> bytes:
+        """Multiply interleaved int16 PCM by a gain."""
+        if not chunk or abs(gain - 1.0) < 1e-3:
+            return chunk
+        samples = array.array("h")
+        samples.frombytes(chunk[: len(chunk) - len(chunk) % 2])
+        for i, s in enumerate(samples):
+            samples[i] = max(-32768, min(32767, int(s * gain)))
+        return samples.tobytes()
+
+    def _note_level(self, chunk: bytes) -> None:
+        usable = len(chunk) - len(chunk) % 2
+        if not usable:
+            return
+        samples = array.array("h")
+        samples.frombytes(chunk[:usable])
+        self.stats.level = max(max(samples), -min(samples)) / 32768.0
 
     # ---- one frame at a time -------------------------------------------------
     def enqueue(self, payload: bytes, marker: bool, timestamp: int | None = None) -> None:
@@ -460,6 +602,7 @@ class AudioSender:
             "transport": "srtp/udp" if self.srtp else "rtp/udp",
             "application": self.application,
             "bitrate_kbps": self.bitrate_kbps,
+            "volume": self.volume,
             "queue_target": self.queue_target,
             "queue": len(self._q),
             "stats": self.stats.snapshot(),
@@ -469,17 +612,25 @@ class AudioSender:
 def source_from_spec(spec: str) -> Source:
     """Build a :class:`Source` from the ``--audio-source`` spelling.
 
-    ``tone`` (a 440 Hz sine) or ``file:PATH``. Anything else is an error the caller can report
-    without a traceback.
+    ``tone`` (a 440 Hz sine), ``file:PATH``, ``system`` (what this computer plays) or
+    ``device:NAME`` (one capture device, see ``--audio-devices``). A bad spelling is a
+    ``ValueError``; a capture that cannot be set up on this machine is a ``RuntimeError``.
     """
     if spec == "tone":
         return Source.test_tone()
+    if spec == "system":
+        return Source.system()
+    if spec.startswith("device:"):
+        name = spec[len("device:") :]
+        if not name:
+            raise ValueError("--audio-source device: needs a name (see --audio-devices)")
+        return Source.device(name)
     if spec.startswith("file:"):
         path = spec[len("file:") :]
         if not path:
             raise ValueError("--audio-source file: needs a path")
         return Source.from_file(path)
-    raise ValueError(f"unknown audio source {spec!r}; use tone or file:PATH")
+    raise ValueError(f"unknown audio source {spec!r}; use tone, file:PATH, system or device:NAME")
 
 
 __all__ = ["SAMPLES_PER_FRAME", "AudioSender", "AudioStats", "RtpSink", "Source", "ffmpeg_path", "source_from_spec"]

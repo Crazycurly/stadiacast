@@ -69,6 +69,7 @@ class Config:
     audio_source: str = ""  # '' off | tone | file:PATH: started once the display link is READY
     audio_mode: int = 2  # SetAudioModeRequest before the stream: 2 = WebRTC Opus (the jack path), 0 = leave it alone
     audio_bitrate_kbps: int = 64  # Opus encoder bitrate
+    audio_volume: float = 1.0  # linear gain before encoding (above 1 a limiter guards against clipping)
 
     # -- display link (post-DTLS RPCs) -----------------------------------------------------
     display_rpc: str = "on"  # on | off

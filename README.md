@@ -165,11 +165,25 @@ borrowing the endpoint's, which the input ACKs use.
 ```sh
 stadiacast --audio-source tone          # 440 Hz, proves the path without any audio setup
 stadiacast --audio-source file:x.ogg    # anything ffmpeg can decode
+stadiacast --audio-source system        # what this computer plays (see below)
+stadiacast --audio-source device:NAME   # one capture device; --audio-devices lists them
 ```
 
 The stream starts once the display link reaches READY. `--audio-bitrate` sets the Opus bitrate
-(64 kbit/s by default) and `/_status` reports the stream under `playback`. ffmpeg with libopus
-is the only extra requirement, and only for those two sources.
+(64 kbit/s by default), `--audio-volume` the gain before encoding, and `/_status` reports the
+stream under `playback`. ffmpeg with libopus is the only extra requirement. `/_audio` controls
+the stream while the receiver runs: `GET` shows it, `POST` takes `{"do": "start", "source":
+"system"}`, `{"do": "stop"}`, `{"do": "volume", "volume": 0.5}` or `{"do": "mode", "mode": 2}`.
+
+**`system`, what the computer plays.** The capture needs the `audio` extra once
+(`pip install 'stadiacast[audio]'`, or `uv sync --extra audio`); the receiver captures in its
+own process and feeds ffmpeg, because ffmpeg's own device inputs drop samples. On macOS,
+choose a virtual output such as BlackHole (`brew install blackhole-2ch`) as the sound output,
+or put it in a Multi-Output Device next to the speakers; the volume keys do not act on a
+virtual device, so set loudness in the app that plays or with `--audio-volume`. On Windows the
+default output's WASAPI loopback is captured and the volume slider and the mute key are
+followed. On Linux the default output's PulseAudio monitor is read through PortAudio, written
+from the documentation and not yet tried on a real machine.
 
 Nothing in the receiver captures audio from a sound card. `ControllerSession.audio_start(None)`
 starts the pacer without an encoder and `audio_feed()` takes Opus frames, so a front end with

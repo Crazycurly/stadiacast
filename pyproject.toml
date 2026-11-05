@@ -37,6 +37,10 @@ dependencies = [
 [project.optional-dependencies]
 ble = ["bleak>=0.21"]
 passthrough = ["aiohttp>=3.9"]
+audio = [  # system audio capture: PortAudio everywhere, WASAPI loopback on Windows
+  "sounddevice>=0.4.6; sys_platform != 'win32'",
+  "pyaudiowpatch>=0.2.12; sys_platform == 'win32'",
+]
 
 [dependency-groups]
 dev = [

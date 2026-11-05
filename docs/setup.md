@@ -48,7 +48,7 @@ Ports used by the receiver (all configurable):
 | 53 TCP/UDP | DNS | the DNS sink (`--dns-upstream` spawns it) |
 | 123 UDP | SNTP | time for the controller (`--sntp`, on in the `live` preset) |
 | 443 TCP | HTTPS | every Google endpoint the firmware talks to |
-| 80, 8008 TCP | HTTP | the local control endpoints `/_status`, `/_rumble`, `/_start_game` |
+| 80, 8008 TCP | HTTP | the local control endpoints `/_status`, `/_rumble`, `/_start_game`, `/_audio` |
 | 40000 UDP | STUN/DTLS | the display link of the first controller (`c0`) |
 | 40001 UDP | STUN/DTLS | the game-streaming session of the first controller |
 | 40002, 40003 UDP, ... | STUN/DTLS | the same pair for the second controller (`c1`), and so on: base port + 2 per controller |
@@ -196,7 +196,8 @@ Events worth knowing when something does not work:
 | `game_start_failed` | the controller refused `StartGame` (it was not in BROWSE) |
 | `rumble_refresh_failed` | the game session dropped while a rumble was held |
 | `audio_start_failed` | `--audio-source` was set but the stream could not start: no ffmpeg with libopus on `PATH`, or the source was refused |
-| `audio_source_invalid` | the `--audio-source` spelling is not `tone` or `file:PATH` |
+| `audio_source_invalid` | the `--audio-source` spelling is wrong, or the capture it names cannot be set up on this machine (no loopback device, missing extra) |
+| `audio_capture`, `audio_capture_failed`, `audio_capture_ended` | the capture feeding ffmpeg (`system`, `device:`) started, could not start, or stopped (`error` says why) |
 | `controller_hardware` | one line at READY with what the controller says about itself: product, hardware and firmware builds, serial, headset |
 | `controller_battery` | the battery gauge moved (`percent`); it steps down one percent at a time |
 | `controller_audio_config` | the headset was plugged in or pulled (`headset`) |

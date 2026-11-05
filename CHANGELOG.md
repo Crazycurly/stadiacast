@@ -16,6 +16,11 @@ All notable changes to this project are documented here. The format follows
   gated by `SetAudioMode(mode=2)` and paced on a 20 ms grid with their own SSRC and sequence
   numbers (`--audio-source tone|file:PATH`, `ControllerSession.audio_start`). Capture is left
   to the caller: `audio_feed()` takes frames from any encoder.
+- System audio to the headset: `--audio-source system` captures what the computer plays with
+  the `audio` extra (macOS through PortAudio and a virtual output such as BlackHole, Windows
+  through WASAPI loopback, following the volume slider; Linux through the PulseAudio monitor,
+  untested), `device:NAME` picks one capture device and `--audio-devices` lists them;
+  `--audio-volume` sets the gain and `/_audio` starts, stops and adjusts the stream at run time.
 - The battery level, headset detection and the controller's hardware description, in
   `/_status` and as the `controller_battery`, `controller_audio_config` and
   `controller_hardware` events.

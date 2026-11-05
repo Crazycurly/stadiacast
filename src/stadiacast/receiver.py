@@ -398,6 +398,8 @@ class Receiver:
             )
         if path in ("/_start_game", "/_rumble"):
             return self._control(req)
+        if path == "/_audio":
+            return await self._audio(req)
         if path in self.cfg.offer_on:
             ctl = await self.controller_for(req)
             if ctl is not None:
@@ -419,6 +421,43 @@ class Receiver:
         if req.path == "/_start_game":
             return picked.game.handle_start_game_request(req)
         return picked.game.handle_rumble_request(req)
+
+    async def _audio(self, req: HttpRequest) -> HttpResponse:
+        """``/_audio``: the headset stream. GET shows it; POST takes ``{"do": ...}``:
+        ``start`` (``source`` as for ``--audio-source``, optional ``volume``), ``stop``,
+        ``volume`` (``volume``) or ``mode`` (``mode``, the SetAudioModeRequest value)."""
+        body: dict[str, Any] = {}
+        if req.body.strip():
+            try:
+                parsed = json.loads(req.body)
+                body = parsed if isinstance(parsed, dict) else {}
+            except ValueError:
+                return self._json(400, {"error": "the body is not JSON"}, handler="audio")
+        picked = self._pick(req, body)
+        if isinstance(picked, HttpResponse):
+            return picked
+        action = str(body.get("do") or "state")
+        try:
+            if action == "state":
+                out = picked.audio_state()
+            elif action == "start":
+                out = await picked.audio_start_spec(str(body.get("source") or "tone"), volume=body.get("volume"))
+            elif action == "stop":
+                out = await picked.audio_stop()
+            elif action == "volume":
+                out = await picked.audio_set_volume(float(body["volume"]))
+            elif action == "mode":
+                out = picked.set_audio_mode(int(body["mode"]), f3=True)
+            else:
+                return self._json(
+                    400,
+                    {"error": f"unknown do={action!r}", "actions": ["state", "start", "stop", "volume", "mode"]},
+                    handler="audio",
+                )
+        except (KeyError, TypeError, ValueError, RuntimeError) as e:
+            return self._json(400, {"error": str(e)}, handler="audio")
+        out["controller"] = picked.label
+        return self._json(200, out, handler="audio")
 
     # ---- boot-time endpoints -------------------------------------------------------------
     async def _stadiaconfig(self, req: HttpRequest) -> HttpResponse:

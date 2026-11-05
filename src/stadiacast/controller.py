@@ -48,6 +48,11 @@ DISPLAY_TOKEN_PREFIX = f"{SERVER_NAME}-display"
 REGISTRATION_TOKEN = SERVER_NAME
 
 
+def _clamp_volume(v: float) -> float:
+    """The gain range that makes sense: below 0.02 is silence, above 4 Opus clips before it gains."""
+    return max(0.02, min(4.0, float(v)))
+
+
 def _as_bool(v: Any) -> bool | None:
     """A tri-state read of a decoded protobuf scalar: None when the field was absent."""
     return None if v is None else bool(v)
@@ -242,7 +247,9 @@ class ControllerSession:
         self.log("audio_mode_sent", mode=int(mode), f2=f2, f3=f3, ticket=ticket)
         return {"ok": ticket is not None, "ticket": ticket, "mode": int(mode)}
 
-    async def audio_start(self, source: Source | None = None, *, srtp: bool = True) -> dict[str, Any]:
+    async def audio_start(
+        self, source: Source | None = None, *, srtp: bool = True, volume: float | None = None
+    ) -> dict[str, Any]:
         """Send audio to the headset jack until :meth:`audio_stop` (or the link goes away).
 
         ``source=None`` starts the pacer with no encoder: the caller supplies the Opus frames
@@ -250,7 +257,15 @@ class ControllerSession:
         own encoder would do.
         """
         if self._audio is None:
-            self._audio = AudioSender(self.endpoint, log=self.log, srtp=srtp, bitrate_kbps=self.cfg.audio_bitrate_kbps)
+            self._audio = AudioSender(
+                self.endpoint,
+                log=self.log,
+                srtp=srtp,
+                bitrate_kbps=self.cfg.audio_bitrate_kbps,
+                volume=self.cfg.audio_volume,
+            )
+        if volume is not None:
+            self._audio.volume = _clamp_volume(volume)
         switched: dict[str, Any] | None = None
         if self.cfg.audio_mode:
             switched = self.set_audio_mode(self.cfg.audio_mode, f3=True)
@@ -260,6 +275,19 @@ class ControllerSession:
             self._audio = None  # ffmpeg missing or the sound card refused the source
             raise
         return {**info, "audio_mode": switched} if switched is not None else info
+
+    async def audio_start_spec(self, spec: str, volume: float | None = None) -> dict[str, Any]:
+        """``/_audio``: start from a ``--audio-source`` spelling (``ValueError`` on a bad one)."""
+        return await self.audio_start(source_from_spec(spec), volume=volume)
+
+    async def audio_set_volume(self, volume: float) -> dict[str, Any]:
+        """Change the gain. ffmpeg takes it at start, so a running source is restarted."""
+        if self._audio is None:
+            self._audio = AudioSender(self.endpoint, log=self.log, bitrate_kbps=self.cfg.audio_bitrate_kbps)
+        self._audio.volume = _clamp_volume(volume)
+        if self._audio.playing and self._audio.source is not None:
+            await self._audio.start(self._audio.source)
+        return self._audio.state()
 
     async def audio_stop(self) -> dict[str, Any]:
         sender, self._audio = self._audio, None
