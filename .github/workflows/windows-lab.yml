@@ -1,0 +1,60 @@
+name: Windows lab
+
+# The Windows-only paths on a hosted Windows runner, by hand: the whole test suite on Windows, the
+# ViGEm pad against the real ViGEmBus driver (read back through XInput, rumble through ViGEm's
+# notification), the WASAPI loopback capture against a virtual audio device, and the Windows
+# executables. Nothing is released.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - run: uv sync --all-extras --group release --locked
+
+      - name: the whole test suite on Windows
+        run: uv run pytest -q
+
+      - name: install the ViGEmBus driver
+        shell: pwsh
+        run: |
+          $url = "https://github.com/nefarius/ViGEmBus/releases/download/v1.22.0/ViGEmBus_1.22.0_x64_x86_arm64.exe"
+          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\ViGEmBus.exe"
+          $p = Start-Process -FilePath "$env:RUNNER_TEMP\ViGEmBus.exe" -ArgumentList "/exenoui","/qn","/norestart" -Wait -PassThru
+          "installer exit code: $($p.ExitCode)"
+          if ($p.ExitCode -notin 0, 3010) { exit $p.ExitCode }
+          Get-PnpDevice | Where-Object { $_.FriendlyName -like "*ViGEm*" -or $_.FriendlyName -like "*Virtual Gamepad*" } | Format-Table Status, FriendlyName -AutoSize
+
+      - name: install a virtual audio device (VB-CABLE), for the loopback capture
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          choco install vb-cable -y --no-progress
+          Get-PnpDevice -Class AudioEndpoint -ErrorAction SilentlyContinue | Format-Table Status, FriendlyName -AutoSize
+
+      - name: the real drivers, through the fake controller
+        env:
+          STADIACAST_WINDOWS_LAB: "1"
+        run: uv run pytest -q -rs tests/test_windows_lab.py
+
+      - name: build and smoke-test the Windows executables
+        shell: bash
+        run: |
+          uv run pyinstaller packaging/stadiacast.spec --noconfirm --clean
+          dist/stadiacast.exe --version
+          dist/stadiacast.exe --help > /dev/null
+          dist/stadiacast.exe --helper dns_sink --help > /dev/null
+          dist/stadiacast-provision.exe --help > /dev/null
+          dist/stadiacast.exe --audio-devices || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-executables
+          path: dist/*.exe
