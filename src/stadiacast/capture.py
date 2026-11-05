@@ -34,6 +34,8 @@ def _sounddevice() -> Any:
         import sounddevice
     except ImportError as e:
         raise RuntimeError("system audio capture needs the audio extra: pip install 'stadiacast[audio]'") from e
+    except OSError as e:  # the binding is there but not the library it wraps
+        raise RuntimeError(f"PortAudio is missing ({e}); on Linux install libportaudio2") from e
     return sounddevice
 
 

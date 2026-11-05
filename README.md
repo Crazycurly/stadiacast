@@ -186,7 +186,8 @@ the stream while the receiver runs: `GET` shows it, `POST` takes `{"do": "start"
 "system"}`, `{"do": "stop"}`, `{"do": "volume", "volume": 0.5}` or `{"do": "mode", "mode": 2}`.
 
 **`system`, what the computer plays.** The capture needs the `audio` extra once
-(`pip install 'stadiacast[audio]'`, or `uv sync --extra audio`); the receiver captures in its
+(`pip install 'stadiacast[audio]'`, or `uv sync --extra audio`; Linux also needs the PortAudio
+library, `apt install libportaudio2`); the receiver captures in its
 own process and feeds ffmpeg, because ffmpeg's own device inputs drop samples. On macOS,
 choose a virtual output such as BlackHole (`brew install blackhole-2ch`) as the sound output,
 or put it in a Multi-Output Device next to the speakers; the volume keys do not act on a

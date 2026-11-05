@@ -306,3 +306,17 @@ def test_the_audio_endpoint(tmp_path) -> None:
             await rx.stop()
 
     asyncio.run(run())
+
+
+def test_a_missing_portaudio_library_is_a_clear_error(tmp_path, monkeypatch) -> None:
+    """Linux without libportaudio2: the binding imports but raises OSError; the receiver says what to install."""
+    from stadiacast import capture
+
+    (tmp_path / "sounddevice.py").write_text("raise OSError('PortAudio library not found')\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.delitem(sys.modules, "sounddevice", raising=False)
+    with pytest.raises(RuntimeError, match="libportaudio2"):
+        capture.portaudio_devices()
+    monkeypatch.setitem(sys.modules, "sounddevice", None)  # not installed at all: the extra is named
+    with pytest.raises(RuntimeError, match="audio extra"):
+        capture.portaudio_devices()
