@@ -56,6 +56,12 @@ def _read(lib, slot: int) -> _XInputGamepad:
 
 
 def test_a_real_vigem_pad_follows_the_controller_and_reports_the_rumble(tmp_path) -> None:
+    if not os.path.exists(r"C:\Windows\INF\xusb22.inf"):
+        # A ViGEm pad is a virtual Xbox 360 controller and binds to Windows' inbox driver for it.
+        # Windows Server (the hosted runners) ships without that driver: the pad enumerates but never
+        # plugs in (TARGET_NOT_PLUGGED_IN), on any software. Desktop Windows 10 and 11 have it.
+        pytest.skip("no Xbox 360 controller driver (xusb22.inf): this Windows cannot host a ViGEm pad")
+
     async def run() -> None:
         rx = make_receiver(tmp_path, gamepad="vigem", start_game="auto", start_game_delay=0.05)
         await rx.start()

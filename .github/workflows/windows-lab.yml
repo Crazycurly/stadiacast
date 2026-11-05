@@ -1,16 +1,25 @@
 name: Windows lab
 
-# The Windows-only paths on a hosted Windows runner, by hand: the whole test suite on Windows, the
-# ViGEm pad against the real ViGEmBus driver (read back through XInput, rumble through ViGEm's
+# The Windows-only paths on a Windows runner, by hand: the whole test suite on Windows, the ViGEm
+# pad against the real ViGEmBus driver (read back through XInput, rumble through ViGEm's
 # notification), the WASAPI loopback capture against a virtual audio device, and the Windows
 # executables. Nothing is released.
+#
+# GitHub's hosted runners are Windows Server, which ships without the Xbox 360 controller driver a
+# ViGEm pad binds to and without any audio endpoint, so those two tests skip there and the run
+# verifies the rest. Point `runner` at a self-hosted Windows 10/11 runner for the full set.
 
 on:
   workflow_dispatch:
+    inputs:
+      runner:
+        description: "runs-on label: windows-latest (hosted, Windows Server, cannot host a ViGEm pad) or a self-hosted Windows 10/11 runner"
+        default: windows-latest
+        required: false
 
 jobs:
   windows:
-    runs-on: windows-latest
+    runs-on: ${{ inputs.runner || 'windows-latest' }}
     timeout-minutes: 40
     env:
       # vgamepad's build script opens the ViGEmBus installer window when the driver is absent;
@@ -73,12 +82,6 @@ jobs:
           Get-Service Audiosrv, AudioEndpointBuilder | Format-Table Status, Name -AutoSize
           Get-PnpDevice -Class AudioEndpoint, MEDIA -ErrorAction SilentlyContinue | Format-Table Status, Class, FriendlyName -AutoSize
           uv run python -c "from stadiacast import loopback; print('loopback devices:', loopback.devices())"
-      - name: a pad with nothing but vgamepad, to see how far the plug-in gets
-        continue-on-error: true
-        shell: pwsh
-        run: |
-          uv run python -c "import time, vgamepad as vg; p = vg.VX360Gamepad(); print('target added'); time.sleep(5); p.update(); print('first report accepted')"
-          Get-PnpDevice | Where-Object { $_.FriendlyName -match "ViGEm|Xbox|Gamepad|Controller" } | Format-Table Status, Class, FriendlyName, InstanceId -AutoSize
       - name: the real drivers, through the fake controller
         env:
           STADIACAST_WINDOWS_LAB: "1"
