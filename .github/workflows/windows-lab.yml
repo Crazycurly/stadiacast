@@ -12,6 +12,10 @@ jobs:
   windows:
     runs-on: windows-latest
     timeout-minutes: 40
+    env:
+      # vgamepad's build script opens the ViGEmBus installer window when the driver is absent;
+      # the driver is installed below, with the quiet switches
+      VGAMEPAD_SKIP_VIGEMBUS_INSTALL: "true"
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7

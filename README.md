@@ -207,9 +207,13 @@ its own capture and encoder drives it directly. How the frames are framed on the
 the receiver's PC, through the [ViGEmBus](https://github.com/nefarius/ViGEmBus) driver:
 
 ```sh
-pip install 'stadiacast[gamepad]'       # once, next to the ViGEmBus driver
+pip install 'stadiacast[gamepad]'       # once; offers to install the ViGEmBus driver when it is missing
 stadiacast --gamepad vigem              # one virtual pad per controller
 ```
+
+The `gamepad` extra is the `vgamepad` package, whose installation runs the ViGEmBus driver's
+installer when the driver is not there yet (set `VGAMEPAD_SKIP_VIGEMBUS_INSTALL=true` to skip
+that, for example on a build machine).
 
 Every decoded report reaches the pad as XInput fields, with the standard stick deadzones
 (`--gamepad-deadzone off` for raw sticks); the Stadia button is the guide button, Assistant
