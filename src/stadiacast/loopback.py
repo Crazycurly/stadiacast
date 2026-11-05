@@ -79,6 +79,11 @@ def describe(name: str | None = None) -> Device:
     p = pa.PyAudio()
     try:
         return _device(p.get_default_wasapi_loopback())
+    except Exception as e:  # no default output device: take the first loopback there is
+        found = devices()
+        if not found:
+            raise RuntimeError(f"no WASAPI loopback device (no output device? {e})") from e
+        return found[0]
     finally:
         p.terminate()
 

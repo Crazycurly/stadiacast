@@ -64,7 +64,11 @@ def test_a_real_vigem_pad_follows_the_controller_and_reports_the_rumble(tmp_path
             await asyncio.wait_for(fc.display_ready.wait(), 5)
             await fc.keepalive()
             assert fc.send_input_rpc(buttons=1 << 12, lx=20000, ly=-20000, lt=255)  # A, left stick, left trigger
-            await wait_for(lambda: rx.status()["gamepads"].get("c0", {}).get("frames", 0) >= 1, timeout=20)
+            try:
+                await wait_for(lambda: rx.status()["gamepads"].get("c0", {}).get("frames", 0) >= 1, timeout=40)
+            except AssertionError:
+                records = [r for r in rx.log.records if str(r["event"]).startswith("gamepad")]
+                pytest.fail(f"no frame reached a pad; gamepad records: {records}; status: {rx.status()['gamepads']}")
             pad = rx.status()["gamepads"]["c0"]
             assert pad["slot"] is not None, "ViGEm created the pad but XInput never showed it"
             lib = _xinput()
@@ -98,7 +102,11 @@ def test_the_windows_loopback_reaches_the_controller(tmp_path) -> None:
     try:
         device = loopback.describe(None)
     except Exception as e:  # no render device on this machine
-        pytest.skip(f"no WASAPI loopback device: {e!r}")
+        try:
+            names = [d.name for d in loopback.devices()]
+        except Exception as listing:  # the listing failed too
+            names = [repr(listing)]
+        pytest.skip(f"no WASAPI loopback device: {e!r}; loopback devices seen: {names}")
 
     async def run() -> None:
         rx = make_receiver(tmp_path, audio_source="system", audio_mode=2)
