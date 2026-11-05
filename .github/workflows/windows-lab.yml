@@ -52,11 +52,6 @@ jobs:
           Get-Service Audiosrv, AudioEndpointBuilder | Format-Table Status, Name -AutoSize
           Get-PnpDevice -Class AudioEndpoint -ErrorAction SilentlyContinue | Format-Table Status, FriendlyName -AutoSize
 
-      - name: the real drivers, through the fake controller
-        env:
-          STADIACAST_WINDOWS_LAB: "1"
-        run: uv run pytest -q -rs tests/test_windows_lab.py
-
       - name: build and smoke-test the Windows executables
         shell: bash
         run: |
@@ -66,6 +61,29 @@ jobs:
           dist/stadiacast.exe --helper dns_sink --help > /dev/null
           dist/stadiacast-provision.exe --help > /dev/null
           dist/stadiacast.exe --audio-devices || true
+      - name: what the runner offers a virtual pad (the Xbox 360 driver) and a capture (audio endpoints)
+        shell: pwsh
+        run: |
+          "xusb22.sys (the inbox Xbox 360 controller driver): " + (Test-Path C:\Windows\System32\drivers\xusb22.sys)
+          "xusb22.inf in the driver store: " + ((Get-ChildItem C:\Windows\INF\xusb22.inf -ErrorAction SilentlyContinue) -ne $null)
+          pnputil /enum-drivers | Select-String -Pattern "xusb|vigem|xinput" -Context 0,3
+          "--- ViGEm bus and any pad it exposes"
+          Get-PnpDevice | Where-Object { $_.FriendlyName -match "ViGEm|Xbox|Gamepad|Controller" } | Format-Table Status, Class, FriendlyName, InstanceId -AutoSize
+          "--- audio"
+          Get-Service Audiosrv, AudioEndpointBuilder | Format-Table Status, Name -AutoSize
+          Get-PnpDevice -Class AudioEndpoint, MEDIA -ErrorAction SilentlyContinue | Format-Table Status, Class, FriendlyName -AutoSize
+          uv run python -c "from stadiacast import loopback; print('loopback devices:', loopback.devices())"
+      - name: a pad with nothing but vgamepad, to see how far the plug-in gets
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          uv run python -c "import time, vgamepad as vg; p = vg.VX360Gamepad(); print('target added'); time.sleep(5); p.update(); print('first report accepted')"
+          Get-PnpDevice | Where-Object { $_.FriendlyName -match "ViGEm|Xbox|Gamepad|Controller" } | Format-Table Status, Class, FriendlyName, InstanceId -AutoSize
+      - name: the real drivers, through the fake controller
+        env:
+          STADIACAST_WINDOWS_LAB: "1"
+        run: uv run pytest -q -rs tests/test_windows_lab.py
+
       - uses: actions/upload-artifact@v4
         with:
           name: windows-executables
