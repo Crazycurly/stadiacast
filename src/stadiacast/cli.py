@@ -211,6 +211,21 @@ def build_parser(preset: str | None = None) -> argparse.ArgumentParser:
         help="SetAudioModeRequest sent before the stream: 2 = WebRTC Opus (the jack), 0 = do not send one",
     )
 
+    g = ap.add_argument_group("virtual gamepad")
+    g.add_argument(
+        "--gamepad",
+        choices=("off", "vigem"),
+        default="off",
+        help="feed the input to a virtual Xbox 360 pad on this PC, one per controller (vigem: Windows, ViGEmBus); "
+        "switches StartGame on so the game's rumble reaches the controller",
+    )
+    g.add_argument(
+        "--gamepad-deadzone",
+        choices=("on", "off"),
+        default="on",
+        help="apply XInput's stick deadzones to the virtual pad (off: raw sticks)",
+    )
+
     g = ap.add_argument_group("display link")
     g.add_argument(
         "--display-rpc",
@@ -371,6 +386,8 @@ def parse_args(argv: Sequence[str] | None = None) -> Config:
         audio_source=a.audio_source,
         audio_bitrate_kbps=a.audio_bitrate,
         audio_volume=a.audio_volume,
+        gamepad=a.gamepad,
+        gamepad_deadzone=a.gamepad_deadzone == "on",
         audio_mode=a.audio_mode,
         display_rpc=a.display_rpc,
         display_rpc_trigger=a.display_rpc_trigger,
@@ -420,6 +437,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         return asyncio.run(amain(cfg))
     except KeyboardInterrupt:
         return 0
-    except (OSError, ValueError) as e:  # a missing certificate, a port in use, a bad --clock-pin, ...
+    except (OSError, RuntimeError, ValueError) as e:  # a missing certificate, a port in use, a bad --clock-pin, ...
         print(f"stadiacast: {e}", file=sys.stderr)
         return 2

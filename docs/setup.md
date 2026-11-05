@@ -56,6 +56,13 @@ Ports used by the receiver (all configurable):
 On Linux, binding the ports below 1024 needs root, or `CAP_NET_BIND_SERVICE` granted to the
 interpreter binary (`setcap cap_net_bind_service=+ep` on the file `.venv/bin/python3` links to).
 
+On Windows, when the controller sits on another subnet than the PC (a dedicated Wi-Fi network
+routed to it), Windows Defender Firewall drops the inbound traffic by default: allow UDP 53,
+TCP 443 and the UDP range of the WebRTC ports (40000 and up, two per controller). A blocked
+game port shows as a steady white controller whose StartGame fails after a few seconds.
+Users also report that the controller's Wi-Fi chip speaks WPA2 only: give the network it joins
+WPA2-Personal (AES) with protected management frames off, not WPA3.
+
 ## Certificate
 
 The firmware validates the server chain against its built-in **Google Trust Services (GTS)**
@@ -198,6 +205,8 @@ Events worth knowing when something does not work:
 | `audio_start_failed` | `--audio-source` was set but the stream could not start: no ffmpeg with libopus on `PATH`, or the source was refused |
 | `audio_source_invalid` | the `--audio-source` spelling is wrong, or the capture it names cannot be set up on this machine (no loopback device, missing extra) |
 | `audio_capture`, `audio_capture_failed`, `audio_capture_ended` | the capture feeding ffmpeg (`system`, `device:`) started, could not start, or stopped (`error` says why) |
+| `gamepad_created`, `gamepad_failed` | `--gamepad`: a controller's virtual pad exists (`slot` is its XInput player), or ViGEm refused it |
+| `gamepad_rumble_failed` | the game's rumble could not be forwarded (the game session was not up) |
 | `controller_hardware` | one line at READY with what the controller says about itself: product, hardware and firmware builds, serial, headset |
 | `controller_battery` | the battery gauge moved (`percent`); it steps down one percent at a time |
 | `controller_audio_config` | the headset was plugged in or pulled (`headset`) |

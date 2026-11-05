@@ -1482,6 +1482,9 @@ audio = [
 ble = [
     { name = "bleak" },
 ]
+gamepad = [
+    { name = "vgamepad", marker = "sys_platform == 'win32'" },
+]
 passthrough = [
     { name = "aiohttp" },
 ]
@@ -1504,8 +1507,9 @@ requires-dist = [
     { name = "pyaudiowpatch", marker = "sys_platform == 'win32' and extra == 'audio'", specifier = ">=0.2.12" },
     { name = "pyopenssl", specifier = ">=23.2" },
     { name = "sounddevice", marker = "sys_platform != 'win32' and extra == 'audio'", specifier = ">=0.4.6" },
+    { name = "vgamepad", marker = "sys_platform == 'win32' and extra == 'gamepad'", specifier = ">=0.1.0" },
 ]
-provides-extras = ["audio", "ble", "passthrough"]
+provides-extras = ["audio", "ble", "gamepad", "passthrough"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1533,6 +1537,12 @@ sdist = { url = "https://files.pythonhosted.org/packages/f6/cc/6253133b5bb138fc3
 wheels = [
     { url = "https://files.pythonhosted.org/packages/49/d3/b8441a820a491ddfc024b0b0cf0393375b75ea13866d9c66727e54c2fc80/typing_extensions-4.16.0-py3-none-any.whl", hash = "sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8", size = 45571, upload-time = "2026-07-02T08:40:04.659Z" },
 ]
+
+[[package]]
+name = "vgamepad"
+version = "0.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/06/a5/990701a89ea8d7528a269c2be1ba71d888de38a762a1b0f8d8eae4c2be62/vgamepad-0.2.0.tar.gz", hash = "sha256:6ac247e6441e194a0277b46f6f9abc02d7995de5ed8dc495b67eddd214364a88", size = 1187555, upload-time = "2026-10-27T04:33:12.455Z" }
 
 [[package]]
 name = "winrt-runtime"

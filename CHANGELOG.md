@@ -16,6 +16,10 @@ All notable changes to this project are documented here. The format follows
   gated by `SetAudioMode(mode=2)` and paced on a 20 ms grid with their own SSRC and sequence
   numbers (`--audio-source tone|file:PATH`, `ControllerSession.audio_start`). Capture is left
   to the caller: `audio_feed()` takes frames from any encoder.
+- A virtual gamepad on Windows: `--gamepad vigem` turns each controller into an Xbox 360 pad
+  through the ViGEmBus driver (the `gamepad` extra), with the stick deadzones of XInput
+  (`--gamepad-deadzone`), the game's rumble forwarded to the controller, and one pad per
+  controller; `/_status` lists them under `gamepads`.
 - System audio to the headset: `--audio-source system` captures what the computer plays with
   the `audio` extra (macOS through PortAudio and a virtual output such as BlackHole, Windows
   through WASAPI loopback, following the volume slider; Linux through the PulseAudio monitor,

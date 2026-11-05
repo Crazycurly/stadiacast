@@ -34,6 +34,7 @@ Receiver                                   one per process (receiver.py)
       ├── display RPC state machine        GetControllerState → READY → input (controller.py)
       ├── InputDecoder                     InputProtocolMessage stream (input_protocol.py)
       ├── AudioSender                      Opus to the headset jack, paced RTP on the media pair (audio.py)
+      │                                   ⇢ VirtualGamepads  one pad per controller, owned by the Receiver (virtual_gamepad.py)
       └── GameSession                      StartGame, proxied RPCs, rumble (game_session.py)
            ├── RtcEndpoint "game"          second UDP socket, own certificate
            └── InputDecoder
@@ -129,5 +130,5 @@ runs with `--preset live` on ports 53/80/123/443, which `tools/start_receiver.sh
 | a new boot-time endpoint | `Receiver._route` and a handler next to `_omaha` / `_clearcut` |
 | a new display RPC the controller sends | `ControllerSession._answer_request` |
 | a new message on the game session | `GameSession._on_app_data` / `_on_rpc` |
-| an output for the decoded input | consume `Receiver.wait_event()` / `publish_event()` events |
+| an output for the decoded input | consume `Receiver.wait_event()` / `publish_event()` events; `virtual_gamepad.py` is one |
 | a schema change | the `.proto` under `schemas/`, then `python -m stadiacast.schema_compiler` |

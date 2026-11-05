@@ -71,6 +71,10 @@ class Config:
     audio_bitrate_kbps: int = 64  # Opus encoder bitrate
     audio_volume: float = 1.0  # linear gain before encoding (above 1 a limiter guards against clipping)
 
+    # -- virtual gamepad (the input as a pad on this PC) -----------------------------------
+    gamepad: str = "off"  # off | vigem: one virtual Xbox 360 pad per controller (Windows, ViGEmBus); implies StartGame
+    gamepad_deadzone: bool = True  # apply XInput's stick deadzones (False: raw sticks)
+
     # -- display link (post-DTLS RPCs) -----------------------------------------------------
     display_rpc: str = "on"  # on | off
     display_rpc_trigger: str = "resolve"  # resolve (after v1:ResolveDiscovery) | dtls (at dtls-connected)

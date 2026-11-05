@@ -35,6 +35,7 @@ from stadiacast.http_server import HttpRequest, HttpResponse, HttpServer
 from stadiacast.log import EventLog
 from stadiacast.netutil import fetch_upstream, local_ip_towards
 from stadiacast.protos import Protos, decode_unknown, printable
+from stadiacast.virtual_gamepad import VirtualGamepads
 
 #: Sessions kept at once; beyond this the least recently seen controller is forgotten.
 MAX_CONTROLLERS = 8
@@ -54,6 +55,7 @@ class Receiver:
         self.protos = Protos(cfg.proto_dir)
         self.http = HttpServer(cfg, self.log, self.handle, self.now)
         self.controllers: dict[str, ControllerSession] = {}  # label -> session, in creation order
+        self.gamepads: VirtualGamepads | None = None  # --gamepad: a virtual pad per controller
         self._by_id: dict[str, ControllerSession] = {}  # device ids and serials
         self._by_ip: dict[str, ControllerSession] = {}  # latest controller seen from an address
         self._by_token: dict[str, ControllerSession] = {}  # display token -> session (GMsg attribution)
@@ -80,6 +82,14 @@ class Receiver:
     async def start(self) -> None:
         self.events = asyncio.Queue()
         ensure_certificate(self.cfg, self.log)
+        if self.cfg.gamepad != "off" and self.gamepads is None:
+            self.gamepads = VirtualGamepads.create(self.cfg, self.log, self)
+        if self.gamepads is not None and self.cfg.start_game is None:
+            # Rumble has no path but the game session, so a virtual pad implies StartGame.
+            self.cfg.start_game = "auto"
+            self.log(
+                "gamepad_start_game", note="--gamepad switches StartGame on so the game's rumble reaches the controller"
+            )
         if self.cfg.clock_pin:
             self._clock_base = resolve_clock_pin(self.cfg)
             self.log(
@@ -124,6 +134,8 @@ class Receiver:
             self._stats_task = None
         for ctl in list(self.controllers.values()):
             ctl.stop()
+        if self.gamepads is not None:
+            self.gamepads.close()
         await self.http.stop()
         for proc in (self._dns_proc, self._sntp_proc):
             if proc and proc.returncode is None:
@@ -646,6 +658,8 @@ class Receiver:
         """A decoded input event from one of the controllers (``ev["controller"]`` says which)."""
         if self.events is not None:
             self.events.put_nowait(ev)
+        if self.gamepads is not None:
+            self.gamepads.on_event(ev)
 
     async def wait_event(self, timeout: float = 5.0) -> dict[str, Any]:
         assert self.events is not None
@@ -687,6 +701,7 @@ class Receiver:
             "version": __version__,
             "controllers": {ctl.label: ctl.status() for ctl in self.controllers.values()},
             "advertise_ip": self.cfg.advertise_ip,
+            "gamepads": self.gamepads.status() if self.gamepads is not None else None,
             "event_counts": self.log.counts,
             "log_dir": self.cfg.log_dir,
         }

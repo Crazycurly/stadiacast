@@ -179,6 +179,8 @@ class ControllerSession:
                 task.cancel()
         self._rtcp_task = self._display_task = self._display_fallback_task = None
         self._stop_audio()
+        if self.rx.gamepads is not None:
+            self.rx.gamepads.release(self.label)
         self.game.close()
         self.endpoint.close()
 
@@ -206,6 +208,8 @@ class ControllerSession:
         self._last_input = None
         self.session["display"] = _fresh_display_session()
         self._stop_audio()
+        if self.rx.gamepads is not None:
+            self.rx.gamepads.release(self.label)
         self.game.reset()
 
     def status(self) -> dict[str, Any]:

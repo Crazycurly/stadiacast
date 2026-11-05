@@ -190,6 +190,25 @@ starts the pacer without an encoder and `audio_feed()` takes Opus frames, so a f
 its own capture and encoder drives it directly. How the frames are framed on the wire is in
 [docs/protocol.md](docs/protocol.md#audio-to-the-headset-jack).
 
+## Virtual gamepad (Windows)
+
+`--gamepad vigem` turns each controller into an ordinary Xbox 360 controller for the games on
+the receiver's PC, through the [ViGEmBus](https://github.com/nefarius/ViGEmBus) driver:
+
+```sh
+pip install 'stadiacast[gamepad]'       # once, next to the ViGEmBus driver
+stadiacast --gamepad vigem              # one virtual pad per controller
+```
+
+Every decoded report reaches the pad as XInput fields, with the standard stick deadzones
+(`--gamepad-deadzone off` for raw sticks); the Stadia button is the guide button, Assistant
+and Capture have no XInput equivalent. The game's rumble comes back: ViGEm reports the motor
+levels a game sets and the receiver forwards them to the controller through the game session,
+which `--gamepad` switches on for that reason. Two controllers are players 1 and 2, each fed
+only by its own reports; `/_status` lists the pads under `gamepads` with the XInput slot each
+landed on. The ViGEm path has not been run on this project's own rig yet; the tests drive the
+same code against a fake pad.
+
 ## Repository layout
 
 | path | what |
@@ -200,6 +219,8 @@ its own capture and encoder drives it directly. How the frames are framed on the
 | `src/stadiacast/controller.py` | one controller's session: discovery RPCs, GMsg queue, signaling, display link, input |
 | `src/stadiacast/game_session.py` | the game-streaming session: StartGame, proxied RPCs, input, rumble |
 | `src/stadiacast/audio.py` | headset audio: Opus frames paced onto the display link's media pair (`--audio-source`) |
+| `src/stadiacast/capture.py`, `loopback.py`, `sysvolume.py` | system audio capture: PortAudio, the Windows WASAPI loopback and its volume |
+| `src/stadiacast/virtual_gamepad.py` | the input as a virtual Xbox 360 pad per controller, rumble back (`--gamepad`, Windows) |
 | `src/stadiacast/http_server.py` | the HTTP/1.1 server shaped for the firmware's client |
 | `src/stadiacast/rtc/` | STUN, DTLS (pyOpenSSL), SRTP, RTP and WireHeader2 framing, one module each; `RtcEndpoint` ties them to a UDP socket |
 | `src/stadiacast/signaling.py` | the protobuf SDP offer / answer / candidate messages |
