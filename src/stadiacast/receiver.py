@@ -30,6 +30,7 @@ from stadiacast import SERVER_NAME, __version__
 from stadiacast.certs import ensure_certificate, resolve_clock_pin
 from stadiacast.config import CLEARCUT_HOSTS, Config
 from stadiacast.controller import ControllerSession
+from stadiacast.errors import SetupError
 from stadiacast.helpers import DNS_SINK, SNTP_SERVER, helper_command
 from stadiacast.http_server import HttpRequest, HttpResponse, HttpServer
 from stadiacast.log import EventLog
@@ -475,9 +476,9 @@ class Receiver:
                     {"error": f"unknown do={action!r}", "actions": ["start", "stop", "volume", "mode"]},
                     handler="audio",
                 )
-        except (KeyError, TypeError, ValueError, RuntimeError) as e:
-            # a missing or malformed field, a bad source spelling, no ffmpeg, or (SetupError) a capture
-            # this computer cannot open: the caller's to fix, so a 400 that says which
+        except (KeyError, TypeError, ValueError, SetupError) as e:
+            # a missing or malformed field, a bad source spelling, or (SetupError) something this
+            # computer lacks, ffmpeg or a capture device: the caller's to fix, so a 400 that says which
             return self._json(400, {"error": str(e)}, handler="audio")
         out["controller"] = picked.label
         return self._json(200, out, handler="audio")
