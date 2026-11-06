@@ -26,12 +26,16 @@ Three things the obvious implementation gets wrong, and this module does not:
    jitter buffer wants one every 20 ms. ``_pace`` does that on a 4 ms poll: Windows' default
    timer resolution is 15.6 ms, so a bare ``sleep(0.02)`` degenerates into 20/31 ms.
 
-Nothing here captures audio from a sound card: this module only turns a stream of Opus frames
-into what the controller accepts. ``Source`` builds the ffmpeg input that produces those frames
-when a caller wants one (a tone to prove the path, a file to listen to); a caller that already
-has an encoder passes ``None`` to :meth:`AudioSender.start` and hands frames to
-:meth:`AudioSender.enqueue` itself. Encoding with ffmpeg is the convenient default because its
-RTP muxer gives frame boundaries for free and the local UDP hop costs under a millisecond.
+The frames come from ffmpeg, and a :class:`Source` is its input. A test tone or a file ffmpeg
+reads by itself. What the computer plays (``system``) or one capture device (``device:NAME``) is
+captured in this process (:mod:`stadiacast.capture`: PortAudio, or the WASAPI loopback on
+Windows), and the sender writes the PCM blocks to ffmpeg's stdin. On Windows it first scales them
+by the system volume, which the loopback does not apply. Reading a block, scaling it and measuring
+its level happen in one worker thread, so no per-sample arithmetic runs on the event loop that
+paces every controller's packets. A caller that already has an encoder passes ``None`` to
+:meth:`AudioSender.start` and hands frames to :meth:`AudioSender.enqueue` itself. Encoding with
+ffmpeg is the convenient default because its RTP muxer gives frame boundaries for free and the
+local UDP hop costs under a millisecond.
 """
 
 from __future__ import annotations
