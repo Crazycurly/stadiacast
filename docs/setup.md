@@ -152,8 +152,10 @@ The run directory contains:
 | `dns.jsonl`, `sntp.jsonl` | the helper processes' logs |
 | `bridge100.pcap` | the packet capture, when enabled |
 
-`GET http://<receiver>/_status` returns the live session state as JSON. `-v` echoes the bulky
-log fields (request bodies, decoded protobufs) to the console too.
+`GET http://<receiver>/_status` returns the live state as JSON: per controller its session,
+battery level, headset and headset stream (`playback`), and with `--gamepad` every virtual pad
+under `gamepads`, with its XInput `slot` or the `error` its creation ended in. `-v` echoes the
+bulky log fields (request bodies, decoded protobufs) to the console too.
 
 ### Waking the controller
 
@@ -202,10 +204,10 @@ Events worth knowing when something does not work:
 | `rpc_out_failed` | an RPC was attempted without a DTLS session |
 | `game_start_failed` | the controller refused `StartGame` (it was not in BROWSE) |
 | `rumble_refresh_failed` | the game session dropped while a rumble was held |
-| `audio_start_failed` | `--audio-source` was set but the stream could not start: no ffmpeg with libopus on `PATH`, or the source was refused |
+| `audio_start_failed` | the `--audio-source` stream could not start (`spec` is the source, `error` says why): no ffmpeg with libopus on `PATH`, or the source was refused |
 | `audio_source_invalid` | the `--audio-source` spelling is wrong, or the capture it names cannot be set up on this machine (no loopback device, missing extra) |
-| `audio_capture`, `audio_capture_failed`, `audio_capture_ended` | the capture feeding ffmpeg (`system`, `device:`) started, could not start, or stopped (`error` says why) |
-| `gamepad_created`, `gamepad_failed` | `--gamepad`: a controller's virtual pad exists (`slot` is its XInput player), or ViGEm refused it |
+| `audio_capture`, `audio_capture_failed`, `audio_capture_ended` | the capture feeding ffmpeg (`system`, `device:`) started, could not start, or stopped (`error` says why); after a failure ffmpeg exits (`audio_ffmpeg_exited`) and both start again, until the stream is stopped |
+| `gamepad_created`, `gamepad_failed` | `--gamepad`: a controller's virtual pad exists (`slot` is its XInput player), or could not be created (`error`, shown under `gamepads` in `/_status` too); the controller's next boot tries again |
 | `gamepad_rumble_failed` | the game's rumble could not be forwarded (the game session was not up) |
 | `controller_hardware` | one line at READY with what the controller says about itself: product, hardware and firmware builds, serial, headset |
 | `controller_battery` | the battery gauge moved (`percent`); it steps down one percent at a time |
