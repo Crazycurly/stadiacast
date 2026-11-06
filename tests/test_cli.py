@@ -9,9 +9,10 @@ from pathlib import Path
 
 import pytest
 
-from stadiacast import __version__
+from stadiacast import __version__, cli
 from stadiacast.cli import DEFAULT_CERT, DEFAULT_KEY, main, parse_args
 from stadiacast.config import PRESETS
+from stadiacast.errors import SetupError
 from stadiacast.helpers import DNS_SINK, HELPERS, SNTP_SERVER, helper_command
 
 SRC = str(Path(__file__).resolve().parents[1] / "src")
@@ -98,6 +99,44 @@ def test_every_helper_command_line_runs_its_helper():
             helper_command(name, ["--help"]), capture_output=True, text=True, env=env, check=True, timeout=60
         )
         assert "--log" in out.stdout
+
+
+def test_main_prints_what_the_user_can_fix_and_a_bug_keeps_its_traceback(tmp_path, monkeypatch, capsys):
+    assert main(["--rpc-response", f"Nope={tmp_path / 'missing.bin'}"]) == 2  # read by the command line itself
+    err = capsys.readouterr().err
+    assert err.startswith("stadiacast: ") and "missing.bin" in err
+
+    def amain_raising(error: Exception):
+        async def amain(_cfg: object) -> int:
+            raise error
+
+        return amain
+
+    monkeypatch.setattr(cli, "amain", amain_raising(SetupError("--gamepad vigem needs the gamepad extra")))
+    assert main([]) == 2
+    assert capsys.readouterr().err == "stadiacast: --gamepad vigem needs the gamepad extra\n"
+    monkeypatch.setattr(cli, "amain", amain_raising(RuntimeError("a bug")))
+    with pytest.raises(RuntimeError, match="a bug"):
+        main([])
+
+
+def test_audio_devices_lists_the_capture_devices_or_says_what_to_install(monkeypatch, capsys):
+    from stadiacast import capture
+
+    monkeypatch.setattr(capture, "list_devices", lambda: ["Loopback Output", "Built-in Microphone"])
+    with pytest.raises(SystemExit) as exc:
+        parse_args(["--audio-devices"])
+    assert exc.value.code == 0
+    assert capsys.readouterr().out.splitlines() == ["Loopback Output", "Built-in Microphone"]
+
+    def no_extra() -> list[str]:
+        raise SetupError("system audio capture needs the audio extra")
+
+    monkeypatch.setattr(capture, "list_devices", no_extra)
+    with pytest.raises(SystemExit) as exc:
+        parse_args(["--audio-devices"])
+    assert exc.value.code == 2
+    assert capsys.readouterr().err == "stadiacast: system audio capture needs the audio extra\n"
 
 
 def test_helpers_run_through_the_executable_when_frozen(monkeypatch, capsys):

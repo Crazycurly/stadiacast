@@ -12,6 +12,7 @@ from typing import Any
 
 from stadiacast import __version__
 from stadiacast.config import AUDIO_APPLICATIONS, PRESETS, Config
+from stadiacast.errors import SetupError
 from stadiacast.game_session import GAME_FRAMINGS, GAME_KEY_MAX, HAPTICS_WATCHDOG_S
 from stadiacast.helpers import HELPER_FLAG, run_helper
 from stadiacast.receiver import Receiver
@@ -26,16 +27,21 @@ def _csv(value: str) -> tuple[str, ...]:
 
 
 class _ListAudioDevices(argparse.Action):
-    """``--audio-devices``: print the capture devices of this computer and exit, like ``--version``."""
+    """``--audio-devices``: print the capture devices of this computer and exit, like ``--version``.
+
+    The list goes to standard output, one name per line, so it can be piped; a missing extra or
+    library is one line on standard error and exit status 2.
+    """
 
     def __call__(self, parser: argparse.ArgumentParser, *_args: Any, **_kw: Any) -> None:
         from stadiacast.capture import list_devices
 
         try:
             names = list_devices()
-        except RuntimeError as e:
+        except SetupError as e:  # no audio extra, no PortAudio library
             parser.exit(2, f"stadiacast: {e}\n")
-        parser.exit(0, "".join(f"{name}\n" for name in names) or "no capture devices found\n")
+        print("\n".join(names) if names else "no capture devices found")
+        parser.exit(0)
 
 
 def build_parser(preset: str | None = None) -> argparse.ArgumentParser:
@@ -449,14 +455,20 @@ async def amain(cfg: Config) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Run the receiver until Ctrl-C or SIGTERM.
+
+    What the user can fix is printed in one line with exit status 2: a missing certificate or
+    ``--rpc-response`` file, a port in use, a bad ``--clock-pin`` or ``--rpc-fields`` JSON, a
+    missing extra or driver (:class:`~stadiacast.errors.SetupError`).  Anything else is a bug and
+    keeps its traceback.
+    """
     args = list(sys.argv[1:] if argv is None else argv)
     if args[:1] == [HELPER_FLAG]:  # the frozen executable re-launched as one of its helpers
         return run_helper(args[1:])
-    cfg = parse_args(args)
     try:
-        return asyncio.run(amain(cfg))
+        return asyncio.run(amain(parse_args(args)))
     except KeyboardInterrupt:
         return 0
-    except (OSError, RuntimeError, ValueError) as e:  # a missing certificate, a port in use, a bad --clock-pin, ...
+    except (OSError, ValueError, SetupError) as e:
         print(f"stadiacast: {e}", file=sys.stderr)
         return 2
