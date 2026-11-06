@@ -144,8 +144,9 @@ class ControllerSession:
         self._rpc_ticket = 0
         self._rpc_pending: dict[int, str] = {}  # tickets of our requests -> purpose
         self._last_input: GamepadState | None = None  # previous ControllerToDisplay #3 report
-        self._audio: AudioSender | None = None  # headset jack, created on demand
-        self._audio_task: asyncio.Task[None] | None = None
+        self._audio: AudioSender | None = None  # headset jack, created when a stream starts
+        self._audio_volume = self.cfg.audio_volume  # the stream's gain, kept across starts and stops
+        self._audio_task: asyncio.Task[None] | None = None  # this boot's --audio-source autostart
 
     def __repr__(self) -> str:
         return f"ControllerSession({self.label}, key={self.key!r}, ip={self.ip!r})"
@@ -258,18 +259,20 @@ class ControllerSession:
 
         ``source=None`` starts the pacer with no encoder: the caller supplies the Opus frames
         through :meth:`audio_feed`.  That is what the tests use, and what a caller with its
-        own encoder would do.
+        own encoder would do.  ``volume`` becomes the session's gain (see :meth:`audio_set_volume`).
         """
+        if volume is not None:
+            self._audio_volume = _clamp_volume(volume)
         if self._audio is None:
             self._audio = AudioSender(
                 self.endpoint,
                 log=self.log,
                 srtp=srtp,
                 bitrate_kbps=self.cfg.audio_bitrate_kbps,
-                volume=self.cfg.audio_volume,
+                volume=self._audio_volume,
             )
-        if volume is not None:
-            self._audio.volume = _clamp_volume(volume)
+        else:
+            self._audio.volume = self._audio_volume
         switched: dict[str, Any] | None = None
         if self.cfg.audio_mode:
             switched = self.set_audio_mode(self.cfg.audio_mode, f3=True)
@@ -285,13 +288,20 @@ class ControllerSession:
         return await self.audio_start(source_from_spec(spec), volume=volume)
 
     async def audio_set_volume(self, volume: float) -> dict[str, Any]:
-        """Change the gain. ffmpeg takes it at start, so a running source is restarted."""
-        if self._audio is None:
-            self._audio = AudioSender(self.endpoint, log=self.log, bitrate_kbps=self.cfg.audio_bitrate_kbps)
-        self._audio.volume = _clamp_volume(volume)
-        if self._audio.playing and self._audio.source is not None:
-            await self._audio.start(self._audio.source)
-        return self._audio.state()
+        """Change the gain of this controller's stream, the one playing and the ones started later.
+
+        The gain belongs to the session, not to a sender: without a stream it waits for the next
+        start (``--audio-source`` at READY included).  ffmpeg takes it at start, so a running
+        source is restarted.
+        """
+        self._audio_volume = _clamp_volume(volume)
+        sender = self._audio
+        if sender is None:
+            return {"playing": False, "volume": self._audio_volume}
+        sender.volume = self._audio_volume
+        if sender.playing and sender.source is not None:
+            await sender.start(sender.source)
+        return sender.state()
 
     async def audio_stop(self) -> dict[str, Any]:
         sender, self._audio = self._audio, None
@@ -311,8 +321,13 @@ class ControllerSession:
         return self._audio.state()
 
     def _maybe_start_audio(self) -> None:
-        """``--audio-source``: start the stream once the display link reaches READY."""
-        if self._audio is not None or not self.cfg.audio_source:
+        """``--audio-source``: start the stream once per boot, when the display link reaches READY.
+
+        A stream that is already playing (started through ``/_audio``) is left alone.
+        """
+        if not self.cfg.audio_source or self._audio_task is not None:
+            return
+        if self._audio is not None and self._audio.playing:
             return
         try:
             source = source_from_spec(self.cfg.audio_source)
