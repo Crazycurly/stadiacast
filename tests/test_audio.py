@@ -479,6 +479,9 @@ def test_volume_becomes_an_ffmpeg_filter() -> None:
     assert sender._af_args() == ["-af", "volume=2.0000,alimiter=limit=0.98"]
     assert sender._scale_pcm(b"\x00\x40\x00\xc0", 0.5) == b"\x00\x20\x00\xe0"  # 0x4000 -> 0x2000, -0x4000 -> -0x2000
     assert sender._scale_pcm(b"\x00\x40", 1.0) == b"\x00\x40"
+    # The extremes stay in range, a half sample at the end is dropped, and mute is silence.
+    assert sender._scale_pcm(struct.pack("<2h", -32768, 32767) + b"\x01", 0.5) == struct.pack("<2h", -16384, 16383)
+    assert sender._scale_pcm(struct.pack("<2h", -32768, 32767), 0.0) == bytes(4)
 
 
 def test_the_windows_volume_is_followed_unless_turned_off(monkeypatch) -> None:
@@ -521,12 +524,23 @@ class _SineCapture(BlockCapture):
 
 
 @pytest.mark.skipif(ffmpeg_path() is None, reason="needs ffmpeg (with libopus) on PATH")
-def test_a_pcm_source_is_piped_into_ffmpeg() -> None:
-    """The capture path without a sound card: PCM blocks on ffmpeg's stdin come out as Opus frames."""
+@pytest.mark.parametrize(("gain", "application"), [(1.0, "lowdelay"), (0.5, "audio")])
+def test_a_pcm_source_is_piped_into_ffmpeg(monkeypatch, gain: float, application: str) -> None:
+    """The capture path without a sound card: PCM blocks on ffmpeg's stdin come out as Opus frames,
+    scaled by the system volume in the worker thread that reads them, never on the event loop."""
+    scaled_on: set[int] = set()
+    scale_pcm = AudioSender._scale_pcm
+
+    def spy(chunk: bytes, g: float) -> bytes:
+        scaled_on.add(threading.get_ident())
+        return scale_pcm(chunk, g)
+
+    monkeypatch.setattr(AudioSender, "_scale_pcm", staticmethod(spy))
 
     async def run() -> None:
         ep = _StubEndpoint()
-        sender = AudioSender(ep, srtp=False)
+        sender = AudioSender(ep, srtp=False, application=application)
+        monkeypatch.setattr(sender, "_system_gain", lambda: gain)  # what Windows' slider would say
         cap = _SineCapture()
         source = Source(
             ["-f", "s16le", "-ar", "48000", "-ac", "2", "-i", "pipe:0"],
@@ -540,8 +554,9 @@ def test_a_pcm_source_is_piped_into_ffmpeg() -> None:
         finally:
             await sender.stop()
         assert cap.stopped.is_set()
-        assert sender.stats.level > 0.3  # the sine's peak reached ffmpeg
+        assert sender.stats.level == pytest.approx(gain * 12000 / 32768, abs=0.01)  # the sine's peak reached ffmpeg
         assert all(parse_rtp(p).payload for p in ep.sent[:5])
+        assert scaled_on and threading.get_ident() not in scaled_on
 
     asyncio.run(run())
 
