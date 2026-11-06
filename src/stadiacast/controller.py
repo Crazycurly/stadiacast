@@ -234,7 +234,7 @@ class ControllerSession:
         }
 
     # ---- headset audio -------------------------------------------------------
-    def set_audio_mode(self, mode: int, f2: bool | None = None, f3: bool | None = None) -> dict[str, Any]:
+    def set_audio_mode(self, mode: int, f3: bool | None = None) -> dict[str, Any]:
         """``DisplayToController`` #16 ``SetAudioModeRequest``: open the firmware's audio path.
 
         The table is explicit in the firmware: mode 3 is rejected as
@@ -245,12 +245,10 @@ class ControllerSession:
         p = self.protos
         msg = p.DisplayToController()
         msg.set_audio_mode.mode = int(mode)
-        if f2 is not None:
-            msg.set_audio_mode.f2 = bool(f2)
         if f3 is not None:
             msg.set_audio_mode.f3 = bool(f3)
         ticket = self.send_rpc("request", msg, purpose="set_audio_mode")
-        self.log("audio_mode_sent", mode=int(mode), f2=f2, f3=f3, ticket=ticket)
+        self.log("audio_mode_sent", mode=int(mode), f3=f3, ticket=ticket)
         return {"ok": ticket is not None, "ticket": ticket, "mode": int(mode)}
 
     async def audio_start(
