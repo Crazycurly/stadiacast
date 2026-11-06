@@ -168,13 +168,8 @@ and triggers (0 to 255). Bits 0 to 15 of the button mask are the XInput `wButton
 
 ## Headset audio
 
-The headset jack takes a separate media stream on the display link: Opus in RTP (PT 111),
-protected with the SRTP keys the DTLS handshake negotiated, sent on the ICE pair it selected.
-Two things must happen first, and neither is in the SDP: the firmware has to be told
-`SetAudioMode(mode=2, f3=true)` (`DisplayToController` #16), and the media must go on the media
-5-tuple rather than the `0x66` sub-channel that carries input reports: the pad accepts packets
-there and plays nothing. The stream keeps its own SSRC and sequence numbers instead of
-borrowing the endpoint's, which the input ACKs use.
+The receiver can play sound on a headset plugged into the controller. ffmpeg with libopus
+encodes every source, so it has to be on `PATH`:
 
 ```sh
 stadiacast --audio-source tone          # 440 Hz, proves the path without any audio setup
@@ -184,26 +179,36 @@ stadiacast --audio-source device:NAME   # one capture device; --audio-devices li
 ```
 
 The stream starts once the display link reaches READY. `--audio-bitrate` sets the Opus bitrate
-(64 kbit/s by default), `--audio-volume` the gain before encoding, and `/_status` reports the
-stream under `playback`. ffmpeg with libopus is the only extra requirement. `/_audio` controls
-the stream while the receiver runs: `GET` shows it, `POST` takes `{"do": "start", "source":
-"system"}`, `{"do": "stop"}`, `{"do": "volume", "volume": 0.5}` or `{"do": "mode", "mode": 2}`.
+(64 kbit/s by default), `--audio-application` what the encoder favours (`lowdelay`, the
+default, for the shortest delay in games, or `audio` for music) and `--audio-volume` the gain
+before encoding. `/_status` reports the stream under `playback`, and `/_audio` controls it
+while the receiver runs: `GET` shows it, and a `POST` names an action, `{"do": "start",
+"source": "system"}` (optionally with `volume` and `application`), `{"do": "stop"}`,
+`{"do": "volume", "volume": 0.5}` or `{"do": "mode", "mode": 2}`.
 
-**`system`, what the computer plays.** The capture needs the `audio` extra once
+**`system` and `device:NAME`, captured sound.** Both need the `audio` extra once
 (`pip install 'stadiacast[audio]'`, or `uv sync --extra audio`; Linux also needs the PortAudio
-library, `apt install libportaudio2`); the receiver captures in its
-own process and feeds ffmpeg, because ffmpeg's own device inputs drop samples. On macOS,
-choose a virtual output such as BlackHole (`brew install blackhole-2ch`) as the sound output,
-or put it in a Multi-Output Device next to the speakers; the volume keys do not act on a
-virtual device, so set loudness in the app that plays or with `--audio-volume`. On Windows the
-default output's WASAPI loopback is captured and the volume slider and the mute key are
-followed. On Linux the default output's PulseAudio monitor is read through PortAudio, written
-from the documentation and not yet tried on a real machine.
+library, `apt install libportaudio2`). The receiver captures in its own process and pipes the
+PCM to ffmpeg, because ffmpeg's own device inputs drop samples; a device that cannot start
+(busy, or just unplugged) is tried again. On macOS, choose a virtual output such as BlackHole
+(`brew install blackhole-2ch`) as the sound output, or put it in a Multi-Output Device next to
+the speakers; the volume keys do not act on a virtual device, so set loudness in the app that
+plays or with `--audio-volume`. On Windows the default output's WASAPI loopback is captured.
+It carries the mix before the volume slider, so the receiver applies the slider and mute
+itself, which is how the volume and mute keys reach the headset; `--audio-follow-volume off`
+sends the mix as the loopback delivers it. On Linux the default output's PulseAudio monitor is read through
+PortAudio, written from the documentation and not yet tried on a real machine.
 
-Nothing in the receiver captures audio from a sound card. `ControllerSession.audio_start(None)`
-starts the pacer without an encoder and `audio_feed()` takes Opus frames, so a front end with
-its own capture and encoder drives it directly. How the frames are framed on the wire is in
-[docs/protocol.md](docs/protocol.md#audio-to-the-headset-jack).
+**On the wire.** The jack takes a separate media stream on the display link: Opus in RTP
+(PT 111), protected with the SRTP keys the DTLS handshake negotiated, sent on the ICE pair it
+selected. Two things must happen first, and neither is in the SDP: the firmware has to be told
+`SetAudioMode(mode=2, f3=true)` (`DisplayToController` #16), and the media must go on the media
+5-tuple rather than the `0x66` sub-channel that carries input reports: the pad accepts packets
+there and plays nothing. The stream keeps its own SSRC and sequence numbers instead of
+borrowing the endpoint's, which the input ACKs use. ffmpeg is only the convenient encoder: a
+front end with its own capture and encoder starts the pacer alone with
+`ControllerSession.audio_start(None)` and hands it Opus frames through `audio_feed()`. The
+details are in [docs/protocol.md](docs/protocol.md#audio-to-the-headset-jack).
 
 ## Virtual gamepad (Windows)
 
