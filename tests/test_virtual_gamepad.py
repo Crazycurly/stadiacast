@@ -9,9 +9,13 @@ from typing import ClassVar
 import pytest
 
 from stadiacast.config import Config
+from stadiacast.gamepad import Button, GamepadState
+from stadiacast.input_protocol import InputDecoder
 from stadiacast.log import EventLog
+from stadiacast.protos import Protos
 from stadiacast.virtual_gamepad import BUTTON_BITS, MOTOR_SCALE, VirtualGamepads, wait_until_plugged_in
-from tests.helpers import connect_firmware_flow, fake, make_receiver, single, wait_for
+from tests.fake_controller import FakeController
+from tests.helpers import connect_firmware_flow, fake, make_receiver, no_log, single, wait_for
 
 
 class _FakePad:
@@ -46,6 +50,23 @@ def _with_fake_pads(rx):
     rx.cfg.gamepad_deadzone = True
     rx.gamepads = VirtualGamepads(rx.cfg, rx.log, rx, _FakePad)
     return rx
+
+
+def test_both_channels_events_read_back_into_one_state() -> None:
+    """The display link's event carries the buttons as an int and the triggers on their own; the game
+    session's carries the buttons as a hex string and the triggers among the axes. Same report, same state."""
+    want = GamepadState(buttons=int(Button.A | Button.STADIA), lx=20000, ly=-20000, rx=-5, ry=6, l2=255, r2=64)
+    display = want.as_event(None)
+    assert display["buttons"] == 0x11000 and display["triggers"] == {"l": 255, "r": 64}
+    protos = Protos()
+    payload = FakeController("127.0.0.1", 0, protos, log=no_log).gamepad_payload(
+        buttons=want.buttons, lx=want.lx, ly=want.ly, rx=want.rx, ry=want.ry, lt=want.l2, rt=want.r2
+    )
+    (game,) = InputDecoder(protos).decode(payload)["events"]
+    assert game["buttons"] == "0x00011000" and "triggers" not in game
+    assert (game["axes"]["lt"], game["axes"]["rt"]) == (255, 64)
+    assert GamepadState.from_event(display) == GamepadState.from_event(game) == want
+    assert GamepadState.from_event({"axes": {}}) == GamepadState()  # what an event lacks is released or centred
 
 
 def test_input_reaches_the_pad_and_rumble_comes_back(tmp_path) -> None:
@@ -86,6 +107,44 @@ def test_input_reaches_the_pad_and_rumble_comes_back(tmp_path) -> None:
             fc.close()
             await rx.stop()
         assert pad.closed
+
+    asyncio.run(run())
+
+
+def test_input_on_the_game_session_reaches_the_pad(tmp_path) -> None:
+    """``--gamepad`` switches StartGame on, so in a game the input arrives on the game session, whose
+    events carry the buttons as a hex string and the triggers among the axes. The pad gets the same
+    XInput fields as from the display link, and the report is decoded and acked, not dropped."""
+
+    async def run() -> None:
+        rx = _with_fake_pads(
+            make_receiver(
+                tmp_path, display_rpc_delay=0.05, display_rpc_interval=0.1, start_game="auto", start_game_delay=0.05
+            )
+        )
+        await rx.start()
+        fc = await connect_firmware_flow(rx, game_mode=True, game_framing="raw")
+        try:
+            await asyncio.wait_for(fc.display_ready.wait(), 5)
+            await fc.keepalive()
+            await wait_for(lambda: single(rx).session["game"]["state"] == "game-started", 8)
+            seq = fc.send_game_input(buttons=(1 << 12) | (1 << 16), lx=20000, ly=-20000, lt=255, rt=64)  # A, Stadia
+            assert await fc.wait_game_ack(5) == seq
+            await wait_for(lambda: _FakePad.created and _FakePad.created[0].applied)
+            pad = _FakePad.created[0]
+            x = pad.applied[-1]
+            assert x["wButtons"] == (1 << 12) | 0x0400  # Stadia is XInput's guide bit
+            assert (x["bLeftTrigger"], x["bRightTrigger"]) == (255, 64)
+            assert x["sThumbLX"] > 0 and x["sThumbLY"] < 0
+            seq = fc.send_game_input(buttons=0)
+            assert await fc.wait_game_ack(5) == seq
+            await wait_for(lambda: len(pad.applied) >= 2)
+            assert pad.applied[-1]["wButtons"] == 0 and pad.applied[-1]["bLeftTrigger"] == 0
+            assert rx.log.counts.get("game_input_undecodable", 0) == 0
+            assert rx.status()["gamepads"] == {"c0": {"slot": 0, "frames": 2, "rumbles": 0}}
+        finally:
+            fc.close()
+            await rx.stop()
 
     asyncio.run(run())
 

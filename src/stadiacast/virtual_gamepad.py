@@ -3,8 +3,10 @@
 ``--gamepad vigem`` creates one ViGEm pad per controller through ``vgamepad`` (the ``gamepad``
 extra, over the ViGEmBus driver), feeds every decoded input report to it as XInput fields, and
 forwards the game's rumble back to the controller through the game session, which the flag
-switches on once the link is READY (rumble has no other path). Two controllers are XInput
-players 1 and 2, each fed only by its own reports.
+switches on once the link is READY (rumble has no other path). The reports come from the
+display link and, once a game runs, from the game session; both read into the same
+:class:`~stadiacast.gamepad.GamepadState`. Two controllers are XInput players 1 and 2, each fed
+only by its own reports.
 
 :class:`PadBackend` is the small surface the receiver drives, so the tests run the same code
 against a fake pad on every platform.
@@ -233,20 +235,16 @@ class VirtualGamepads:
 
     # ---- input -----------------------------------------------------------------------
     def on_event(self, ev: dict[str, Any]) -> None:
-        """One decoded input event from the receiver: apply it to that controller's pad."""
+        """One decoded input event from the receiver: apply it to that controller's pad.
+
+        Both channels feed it: the display link, and the game session once a game runs (which
+        ``--gamepad`` starts, so in a game this is where the input comes from). Only gamepad
+        reports carry ``axes``; the game session's keyboard, mouse and feedback events do not.
+        """
         label = str(ev.get("controller") or "")
         if not label or label in self._failed or "axes" not in ev:
             return
-        axes, triggers = ev["axes"], ev.get("triggers") or {}
-        state = GamepadState(
-            buttons=int(ev.get("buttons") or 0),
-            lx=int(axes.get("lx", 0)),
-            ly=int(axes.get("ly", 0)),
-            rx=int(axes.get("rx", 0)),
-            ry=int(axes.get("ry", 0)),
-            l2=int(triggers.get("l", 0)),
-            r2=int(triggers.get("r", 0)),
-        )
+        state = GamepadState.from_event(ev)
         pad = self._pads.get(label)
         if pad is None:
             self._pending[label] = state  # applied as soon as the pad exists

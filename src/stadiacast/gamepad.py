@@ -13,12 +13,15 @@ only when something changes.  The layout:
 This module is pure Python with no dependencies: decoding, button names, edge
 detection, a radial stick deadzone and a conversion to the XInput
 ``XINPUT_GAMEPAD`` field set, so any virtual-gamepad backend can consume it.
+:meth:`GamepadState.from_event` reads the receiver's input events back into a
+state, from the display link and from the game session alike.
 """
 
 from __future__ import annotations
 
 import enum
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -97,6 +100,31 @@ class GamepadState:
     def from_message3(cls, m: Any) -> GamepadState:
         """From the decoded ``ControllerToDisplay.message3`` protobuf (fields f1..f7)."""
         return cls(buttons=m.f1, lx=m.f2, ly=m.f3, rx=m.f4, ry=m.f5, l2=m.f6, r2=m.f7)
+
+    @classmethod
+    def from_event(cls, ev: Mapping[str, Any]) -> GamepadState:
+        """From one of the receiver's gamepad input events, whichever channel it came on.
+
+        The two channels describe a report differently. The display link's ``rpc_input`` event
+        (:meth:`as_event`) carries ``buttons`` as an int, the sticks in ``axes`` and the triggers in
+        ``triggers`` as ``l`` / ``r``. The game session's ``gamepad`` event
+        (:mod:`stadiacast.input_protocol`) carries ``buttons`` as a hex string (``"0x00001000"``)
+        and the triggers inside ``axes`` as ``lt`` / ``rt``. Its bits are read with the display
+        link's layout (:class:`Button`, mapped live); the game session's own layout has not been
+        mapped live. A field the event lacks reads as released or centred.
+        """
+        buttons = ev.get("buttons") or 0
+        axes = ev.get("axes") or {}
+        triggers = ev.get("triggers") or {}
+        return cls(
+            buttons=int(buttons, 0) if isinstance(buttons, str) else int(buttons),
+            lx=int(axes.get("lx", 0)),
+            ly=int(axes.get("ly", 0)),
+            rx=int(axes.get("rx", 0)),
+            ry=int(axes.get("ry", 0)),
+            l2=int(triggers.get("l", axes.get("lt", 0))),
+            r2=int(triggers.get("r", axes.get("rt", 0))),
+        )
 
     def held(self) -> list[str]:
         """Names of the buttons held in this report, lowest bit first."""
