@@ -1,0 +1,42 @@
+# Publishes the sdist and the wheel to PyPI once a GitHub release is published. The Release
+# workflow drafts the release with those two files attached; publishing the draft is the human
+# step, and this takes the files from the release, so PyPI carries exactly what GitHub does.
+# The manual trigger publishes an existing release by tag. Uploads with the PYPI_PASSWORD
+# secret, a PyPI API token, like the other repositories.
+name: Publish to PyPI
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "the release to publish, e.g. v1.0.0"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  pypi:
+    name: upload to PyPI
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: astral-sh/setup-uv@v7
+      - name: the release's sdist and wheel
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir dist \
+            --pattern "stadiacast-${version}.tar.gz" \
+            --pattern "stadiacast-${version}-py3-none-any.whl"
+          ls -l dist
+      - run: uvx twine check dist/*
+      - name: upload (files already on PyPI are skipped)
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_PASSWORD }}
+        run: uv publish --check-url https://pypi.org/simple/stadiacast/ dist/*

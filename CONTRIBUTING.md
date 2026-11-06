@@ -118,7 +118,10 @@ through [SECURITY.md](SECURITY.md), not the public tracker.
 3. The Release workflow builds the executables for Windows, macOS and Linux, the sdist and the
    wheel, and attaches them to the release of that tag: it creates a draft release with the
    CHANGELOG section as its notes when none exists yet, so publish the draft after a look. Creating
-   the release on GitHub first works too; the files are then attached to it.
+   the release on GitHub first works too; the files are then attached to it. Publishing the
+   release runs the Publish workflow, which uploads the attached sdist and wheel to PyPI with
+   the `PYPI_PASSWORD` secret (a PyPI API token); `gh workflow run publish.yml -f tag=vX.Y.Z`
+   publishes an existing release by hand.
 4. `make exe` builds the executables for the current platform into `dist/`, for a check before
    tagging; `gh workflow run release.yml` builds all three as workflow artifacts without a tag.
    On Windows, set `VGAMEPAD_SKIP_VIGEMBUS_INSTALL=true` first: installing the `gamepad` extra
