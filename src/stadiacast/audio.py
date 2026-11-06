@@ -235,6 +235,8 @@ class AudioSender:
         bitrate_kbps: int = 64,
         srtp: bool = True,
         volume: float = 1.0,
+        application: str = "lowdelay",
+        follow_system_volume: bool = True,
     ) -> None:
         self.endpoint = endpoint
         self.log = log or (lambda *_a, **_k: None)
@@ -249,9 +251,9 @@ class AudioSender:
         self.volume = volume
         #: Windows only: scale a loopback capture by the endpoint volume, so the slider and the
         #: media keys reach the headset (loopback hands over the mix before that attenuation).
-        self.follow_system_volume = True
+        self.follow_system_volume = follow_system_volume
         #: libopus ``-application``: ``lowdelay`` for games, ``audio`` for music.
-        self.application = "lowdelay"
+        self.application = application
         self.queue_target = QUEUE_TARGET
         self.seq = int(time.time()) & 0xFFFF
         self.stats = AudioStats()
