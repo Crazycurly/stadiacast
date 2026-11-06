@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/jkfran/stadiacast/actions/workflows/ci.yml/badge.svg)](https://github.com/jkfran/stadiacast/actions/workflows/ci.yml)
 ![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)
+[![PyPI](https://img.shields.io/pypi/v/stadiacast)](https://pypi.org/project/stadiacast/)
 ![Status: works end to end](https://img.shields.io/badge/status-works%20end%20to%20end-brightgreen)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -79,6 +80,9 @@ archive for Windows x86_64, macOS (Apple silicon) and Linux x86_64, with `stadia
 terminal. The builds are not signed: macOS asks you to allow the program once (right-click,
 Open, or `xattr -d com.apple.quarantine stadiacast`) and Windows SmartScreen may warn.
 
+**From PyPI**, with Python 3.11 or newer: `pip install 'stadiacast[audio,gamepad]'` (or
+`uv tool install 'stadiacast[audio,gamepad]'`); the extras are optional, see below.
+
 **From source**, with [uv](https://docs.astral.sh/uv/):
 
 ```sh
@@ -87,9 +91,12 @@ cd stadiacast
 uv sync --all-extras
 ```
 
-or with pip, `pip install -e ".[ble,passthrough,audio,gamepad]"`. Either way you get
-`stadiacast`, `stadiacast-provision` and `stadiacast-show-input`, and the scripts under
-`tools/` find the virtualenv on their own.
+or with pip, `pip install -e ".[ble,passthrough,audio,gamepad]"`. Every route installs
+`stadiacast`, `stadiacast-provision` and `stadiacast-show-input`; the `ble` extra is the
+Bluetooth provisioning, `passthrough` proxies the `stadiaconfig` request to Google, `audio`
+and `gamepad` are the [headset audio](#headset-audio) capture and the
+[virtual gamepad](#virtual-gamepad-windows). The scripts under `tools/` find the virtualenv on
+their own.
 
 ## Quick start
 
