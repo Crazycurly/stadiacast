@@ -17,6 +17,7 @@ classifiers = [
   "Environment :: Console",
   "Intended Audience :: End Users/Desktop",
   "Operating System :: MacOS",
+  "Operating System :: Microsoft :: Windows",
   "Operating System :: POSIX :: Linux",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.11",
@@ -25,8 +26,8 @@ classifiers = [
   "Programming Language :: Python :: 3.14",
   "Topic :: Games/Entertainment",
   "Topic :: Software Development :: Embedded Systems",
-  "Typing :: Typed",
   "Topic :: System :: Networking",
+  "Typing :: Typed",
 ]
 dependencies = [
   "protobuf>=4.25",
@@ -104,7 +105,7 @@ addopts = "-ra"
 python_version = "3.11"
 files = ["src"]
 strict = true
-ignore_missing_imports = true  # the optional extras (bleak, aiohttp) may be absent
+ignore_missing_imports = true  # the optional extras (bleak, aiohttp, sounddevice, pyaudiowpatch, vgamepad) may be absent
 
 [tool.coverage.run]
 source = ["stadiacast"]
