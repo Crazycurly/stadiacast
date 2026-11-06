@@ -83,6 +83,26 @@ def test_sender_numbers_frames_on_its_own_grid() -> None:
     asyncio.run(run())
 
 
+def test_a_burst_keeps_only_the_newest_frames() -> None:
+    """ffmpeg bursts at start-up; frames past the queue target go oldest first, so latency stays put."""
+
+    async def run() -> None:
+        ep = _StubEndpoint()
+        sender = AudioSender(ep, srtp=False)
+        await sender.start(None)
+        try:
+            for i in range(10):
+                sender.enqueue(bytes([0xF8, i]), marker=False)
+            await wait_for(lambda: len(ep.sent) >= 6, timeout=2)
+        finally:
+            await sender.stop()
+        assert [parse_rtp(p).payload[1] for p in ep.sent] == [4, 5, 6, 7, 8, 9]
+        stats = sender.stats.snapshot()
+        assert (stats["trimmed"], stats["max_queue"]) == (4, sender.state()["queue_target"])
+
+    asyncio.run(run())
+
+
 def test_audio_reaches_the_controller(tmp_path) -> None:
     async def run() -> None:
         rx = make_receiver(tmp_path)
@@ -154,6 +174,16 @@ def test_a_missing_ffmpeg_is_a_setup_error(monkeypatch) -> None:
         assert not sender.playing
 
     asyncio.run(run())
+
+
+def test_the_opus_application_and_the_volume_follower_are_constructor_choices() -> None:
+    music = AudioSender(None, application="audio", follow_system_volume=False)
+    cmd = music._ffmpeg_cmd("ffmpeg", Source.test_tone())
+    assert cmd[cmd.index("-application") + 1] == "audio"
+    state = music.state()
+    assert (state["application"], state["follow_system_volume"]) == ("audio", False)
+    default = AudioSender(None)
+    assert (default.application, default.follow_system_volume) == ("lowdelay", True)
 
 
 # ---------------------------------------------------------------- system audio capture
@@ -422,6 +452,22 @@ def test_volume_becomes_an_ffmpeg_filter() -> None:
     assert sender._af_args() == ["-af", "volume=2.0000,alimiter=limit=0.98"]
     assert sender._scale_pcm(b"\x00\x40\x00\xc0", 0.5) == b"\x00\x20\x00\xe0"  # 0x4000 -> 0x2000, -0x4000 -> -0x2000
     assert sender._scale_pcm(b"\x00\x40", 1.0) == b"\x00\x40"
+
+
+def test_the_windows_volume_is_followed_unless_turned_off(monkeypatch) -> None:
+    from stadiacast import sysvolume
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(sysvolume, "master_scalar", lambda: 0.25)
+    monkeypatch.setattr(sysvolume, "muted", lambda: False)
+    assert AudioSender(None)._system_gain() == 0.25
+    assert AudioSender(None, follow_system_volume=False)._system_gain() == 1.0
+    monkeypatch.setattr(sysvolume, "muted", lambda: True)
+    assert AudioSender(None)._system_gain() == 0.0  # mute is a switch of its own: the slider can stay up
+    monkeypatch.setattr(sysvolume, "master_scalar", lambda: None)
+    unreadable = AudioSender(None)
+    assert unreadable._system_gain() == 1.0
+    assert unreadable.stats.snapshot()["notes"] == ["the Windows volume could not be read; streaming at full volume"]
 
 
 class _SineCapture(BlockCapture):

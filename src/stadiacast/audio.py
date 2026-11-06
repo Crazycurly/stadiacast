@@ -63,7 +63,6 @@ POLL_INTERVAL = 0.004
 
 #: Frames the queue may hold before the oldest are dropped. Six frames = 120 ms of slack.
 QUEUE_TARGET = 6
-QUEUE_MAX = 120
 
 
 def ffmpeg_path() -> str | None:
@@ -254,7 +253,6 @@ class AudioSender:
         self.follow_system_volume = follow_system_volume
         #: libopus ``-application``: ``lowdelay`` for games, ``audio`` for music.
         self.application = application
-        self.queue_target = QUEUE_TARGET
         self.seq = int(time.time()) & 0xFFFF
         self.stats = AudioStats()
         self.source: Source | None = None
@@ -268,7 +266,8 @@ class AudioSender:
         self._sysvol = 1.0
         self._sysvol_at = 0.0
         self._sysvol_warned = False
-        self._q: collections.deque[tuple[bytes, bool]] = collections.deque(maxlen=QUEUE_MAX)
+        #: Past the target the oldest frame goes, which keeps latency down (ffmpeg bursts at start-up).
+        self._q: collections.deque[tuple[bytes, bool]] = collections.deque(maxlen=QUEUE_TARGET)
         self._running = False
         self._last_send_at = 0.0
         self._timer_raised = False
@@ -536,12 +535,10 @@ class AudioSender:
             return
         if self.stats.first_rtp_ts is None and timestamp is not None:
             self.stats.first_rtp_ts = timestamp
+        if len(self._q) == QUEUE_TARGET:
+            self.stats.trimmed += 1  # the append below pushes the oldest frame out
         self._q.append((payload, marker))
         self.stats.max_queue = max(self.stats.max_queue, len(self._q))
-        # Keep latency down: anything past the target drops the oldest frame (the start-up burst).
-        while len(self._q) > self.queue_target:
-            self._q.popleft()
-            self.stats.trimmed += 1
 
     async def _pace(self) -> None:
         """Send one frame per 20 ms slot, timestamps from the slot index (see the module docstring)."""
@@ -606,7 +603,8 @@ class AudioSender:
             "application": self.application,
             "bitrate_kbps": self.bitrate_kbps,
             "volume": self.volume,
-            "queue_target": self.queue_target,
+            "follow_system_volume": self.follow_system_volume,
+            "queue_target": QUEUE_TARGET,
             "queue": len(self._q),
             "stats": self.stats.snapshot(),
         }
