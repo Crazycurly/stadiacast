@@ -16,8 +16,8 @@ account, and nothing leaves your LAN.
 
 > **Status:** works end to end (input and rumble) on the controller's last Wi-Fi firmware,
 > `ota.282115`, with several controllers at once. Automatic first-boot provisioning and a
-> virtual gamepad driver are on the [roadmap](#roadmap). Expect rough edges; issues and pull
-> requests are very welcome.
+> virtual gamepad on Linux and macOS are on the [roadmap](#roadmap); Windows has one already.
+> Expect rough edges; issues and pull requests are very welcome.
 
 ## How it works
 
@@ -222,18 +222,23 @@ stadiacast --gamepad vigem              # one virtual pad per controller
 
 The `gamepad` extra is the `vgamepad` package, whose installation runs the ViGEmBus driver's
 installer when the driver is not there yet (set `VGAMEPAD_SKIP_VIGEMBUS_INSTALL=true` to skip
-that, for example on a build machine). It needs desktop Windows 10 or 11: a ViGEm pad is a
-virtual Xbox 360 controller that binds to Windows' own driver for it, and Windows Server ships
-without that driver, so the pad never plugs in there.
+that, for example on a build machine). The release executables bundle `vgamepad` but not the
+driver, which comes from its [releases page](https://github.com/nefarius/ViGEmBus/releases). It
+needs desktop Windows 10 or 11: a ViGEm pad is a virtual Xbox 360 controller that binds to
+Windows' own driver for it, and Windows Server ships without that driver, so the pad never
+plugs in there. Without Windows, the extra or the driver, the receiver stops at start-up with
+one line that says what to install.
 
-Every decoded report reaches the pad as XInput fields, with the standard stick deadzones
-(`--gamepad-deadzone off` for raw sticks); the Stadia button is the guide button, Assistant
-and Capture have no XInput equivalent. The game's rumble comes back: ViGEm reports the motor
-levels a game sets and the receiver forwards them to the controller through the game session,
-which `--gamepad` switches on for that reason. Two controllers are players 1 and 2, each fed
-only by its own reports; `/_status` lists the pads under `gamepads` with the XInput slot each
-landed on. The ViGEm path has not been run on this project's own rig yet; the tests drive the
-same code against a fake pad.
+Every decoded report reaches the pad as XInput fields, from the display link and, once a game
+runs, from the game session, with the standard stick deadzones (`--gamepad-deadzone off` for
+raw sticks); the Stadia button is the guide button, Assistant and Capture have no XInput
+equivalent. The game's rumble comes back: ViGEm reports the motor levels a game sets and the
+receiver forwards them to the controller through the game session, which `--gamepad` switches
+on for that reason. Two controllers are players 1 and 2, each fed only by its own reports;
+`/_status` lists the pads under `gamepads` with the XInput slot each landed on, or with the
+`error` a pad's creation ended in, and the controller's next boot tries that pad again. The
+ViGEm path has not been run on this project's own rig yet; the tests drive the same code
+against a fake pad.
 
 ## Repository layout
 
@@ -245,7 +250,7 @@ same code against a fake pad.
 | `src/stadiacast/controller.py` | one controller's session: discovery RPCs, GMsg queue, signaling, display link, input |
 | `src/stadiacast/game_session.py` | the game-streaming session: StartGame, proxied RPCs, input, rumble |
 | `src/stadiacast/audio.py` | headset audio: Opus frames paced onto the display link's media pair (`--audio-source`) |
-| `src/stadiacast/capture.py`, `loopback.py`, `sysvolume.py` | system audio capture: PortAudio, the Windows WASAPI loopback and its volume |
+| `src/stadiacast/capture.py`, `loopback.py`, `sysvolume.py` | system audio capture: PortAudio and the Windows WASAPI loopback on one block-capture base, the Windows volume |
 | `src/stadiacast/virtual_gamepad.py` | the input as a virtual Xbox 360 pad per controller, rumble back (`--gamepad`, Windows) |
 | `src/stadiacast/http_server.py` | the HTTP/1.1 server shaped for the firmware's client |
 | `src/stadiacast/rtc/` | STUN, DTLS (pyOpenSSL), SRTP, RTP and WireHeader2 framing, one module each; `RtcEndpoint` ties them to a UDP socket |
@@ -254,13 +259,15 @@ same code against a fake pad.
 | `src/stadiacast/input_protocol.py` | the `InputProtocolMessage` stream decoder (input on the game session) |
 | `src/stadiacast/gamepad.py` | input report layout, button names, XInput conversion |
 | `src/stadiacast/certs.py` | certificate handling (the built-in credential, your own chain, the lab pair, the clock pin) |
+| `src/stadiacast/errors.py` | `SetupError`: what the user has to install or configure, reported as one line |
 | `src/stadiacast/log.py` | the JSON Lines event log |
 | `src/stadiacast/ble_provisioner.py` | BLE Wi-Fi provisioning (`stadiacast-provision`) |
 | `src/stadiacast/show_input.py` | run summary (`stadiacast-show-input`) |
-| `src/stadiacast/helpers/` | the DNS sink and SNTP server the receiver spawns |
+| `src/stadiacast/helpers/` | the DNS sink and SNTP server the receiver spawns, and their launcher |
 | `src/stadiacast/schemas/` | protobuf schemas: `.descriptor` (runtime) + `.proto` (readable), see its README |
 | `tests/` | unit and end-to-end tests; `fake_controller.py` stands in for the controller |
-| `tools/` | `start_receiver.sh`, `stop_receiver.sh` |
+| `tools/` | `start_receiver.sh`, `stop_receiver.sh`; `pack_credential.py` builds the built-in credential |
+| `packaging/` | the PyInstaller spec and entry points of the standalone executables (`make exe`) |
 | `docs/` | setup guide, protocol notes, architecture overview |
 | `certs/`, `captures/` | your own certificate (optional) and run directories (both ignored by git) |
 
@@ -293,7 +300,8 @@ controller safely.
 
 1. **First-boot autoconnect:** detect a controller in BLE setup mode and provision it onto the
    network automatically (today `stadiacast-provision` is the manual version).
-2. **Virtual gamepad:** feed the decoded input to a virtual game controller on the PC.
+2. **Virtual gamepad on Linux and macOS:** Windows has one (`--gamepad vigem`); Linux (uinput)
+   and macOS are open.
 
 ## Security and privacy
 
