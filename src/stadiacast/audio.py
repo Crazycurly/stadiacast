@@ -64,6 +64,9 @@ POLL_INTERVAL = 0.004
 #: Frames the queue may hold before the oldest are dropped. Six frames = 120 ms of slack.
 QUEUE_TARGET = 6
 
+#: Notes a stream keeps: the latest ones, since a failing ffmpeg adds one per restart.
+NOTES_KEPT = 6
+
 
 def ffmpeg_path() -> str | None:
     """The ``ffmpeg`` on PATH, or None. ``libopus`` is required, not just any build."""
@@ -156,13 +159,12 @@ class Source:
 
 @dataclass
 class AudioStats:
+    """What one run of the sender did: ``/_audio`` shows the snapshot, ``audio_stopped`` logs it."""
+
     frames: int = 0
     payload_bytes: int = 0
-    wire_bytes: int = 0
     started_at: float = 0.0
     last_frame_at: float = 0.0
-    first_rtp_ts: int | None = None
-    last_rtp_ts: int | None = None
     dropped: int = 0
     send_failed: int = 0
     ffmpeg_restarts: int = 0
@@ -176,7 +178,8 @@ class AudioStats:
     gap_ms_max: float = 0.0
     #: Peak of the last PCM block fed to ffmpeg, 0 to 1: shows whether the gain is doing anything.
     level: float = 0.0
-    notes: list[str] = field(default_factory=list)
+    #: The latest things that went wrong, oldest first.
+    notes: collections.deque[str] = field(default_factory=lambda: collections.deque(maxlen=NOTES_KEPT))
 
     def snapshot(self) -> dict[str, Any]:
         up = round(time.time() - self.started_at, 1) if self.started_at else None
@@ -195,7 +198,7 @@ class AudioStats:
             "gap_ms_last": self.gap_ms_last,
             "gap_ms_max": round(self.gap_ms_max, 1),
             "level": round(self.level, 3),
-            "notes": self.notes[-6:],
+            "notes": list(self.notes),
         }
 
 
@@ -218,7 +221,7 @@ class _LocalRtp(asyncio.DatagramProtocol):
         except ValueError:
             self.sink.stats.dropped += 1
             return
-        self.sink.enqueue(pkt.payload, pkt.marker, pkt.timestamp)
+        self.sink.enqueue(pkt.payload, pkt.marker)
 
 
 class AudioSender:
@@ -528,13 +531,11 @@ class AudioSender:
         self.stats.level = max(max(samples), -min(samples)) / 32768.0
 
     # ---- one frame at a time -------------------------------------------------
-    def enqueue(self, payload: bytes, marker: bool, timestamp: int | None = None) -> None:
+    def enqueue(self, payload: bytes, marker: bool) -> None:
         """One Opus frame in. Nothing is sent here: the pacer takes it on the grid."""
         if not payload:
             self.stats.dropped += 1
             return
-        if self.stats.first_rtp_ts is None and timestamp is not None:
-            self.stats.first_rtp_ts = timestamp
         if len(self._q) == QUEUE_TARGET:
             self.stats.trimmed += 1  # the append below pushes the oldest frame out
         self._q.append((payload, marker))
@@ -565,7 +566,6 @@ class AudioSender:
 
     def _emit(self, payload: bytes, marker: bool, slot: int) -> None:
         ts = (slot * SAMPLES_PER_FRAME) & 0xFFFFFFFF
-        self.stats.last_rtp_ts = ts
         pkt = build_rtp(self.payload_type, self.seq, ts, self.ssrc, payload, marker)
         if not self._send_rtp(pkt):
             self.stats.send_failed += 1
@@ -579,7 +579,6 @@ class AudioSender:
         self.seq = (self.seq + 1) & 0xFFFF
         self.stats.frames += 1
         self.stats.payload_bytes += len(payload)
-        self.stats.wire_bytes += len(pkt)
         self.stats.last_frame_at = now
 
     def _send_rtp(self, rtp_packet: bytes) -> bool:

@@ -17,7 +17,7 @@ from typing import Any
 import pytest
 
 from stadiacast import capture, loopback
-from stadiacast.audio import SAMPLES_PER_FRAME, AudioSender, Source, ffmpeg_path, source_from_spec
+from stadiacast.audio import NOTES_KEPT, SAMPLES_PER_FRAME, AudioSender, Source, ffmpeg_path, source_from_spec
 from stadiacast.capture import BLOCK, QUEUE_BLOCKS, BlockCapture
 from stadiacast.errors import SetupError
 from stadiacast.rtc.rtp import parse_rtp
@@ -99,6 +99,33 @@ def test_a_burst_keeps_only_the_newest_frames() -> None:
         assert [parse_rtp(p).payload[1] for p in ep.sent] == [4, 5, 6, 7, 8, 9]
         stats = sender.stats.snapshot()
         assert (stats["trimmed"], stats["max_queue"]) == (4, sender.state()["queue_target"])
+
+    asyncio.run(run())
+
+
+def test_the_notes_keep_only_the_latest() -> None:
+    """A failure that repeats on every frame must not grow the stats without bound."""
+
+    class _FailingEndpoint:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def send_rtp_packet(self, _packet: bytes, **_kwargs: Any) -> bool:
+            self.calls += 1
+            raise OSError(f"send {self.calls}")
+
+    async def run() -> None:
+        sender = AudioSender(_FailingEndpoint(), srtp=False)
+        failures = NOTES_KEPT + 4
+        await sender.start(None)
+        try:
+            for i in range(failures):
+                sender.enqueue(bytes([0xF8, i]), marker=False)
+                await wait_for(lambda n=i: sender.stats.send_failed > n, timeout=2)
+        finally:
+            await sender.stop()
+        notes = sender.stats.snapshot()["notes"]
+        assert notes == [f"send: OSError('send {n}')" for n in range(failures - NOTES_KEPT + 1, failures + 1)]
 
     asyncio.run(run())
 
