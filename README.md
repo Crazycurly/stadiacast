@@ -19,6 +19,10 @@ account, and nothing leaves your LAN.
 > virtual gamepad on Linux and macOS are on the [roadmap](#roadmap); Windows has one already.
 > Expect rough edges; issues and pull requests are very welcome.
 
+> [!TIP]
+> Switched your controller to Bluetooth mode? It accepts older Google-signed images, so the
+> community's USB flashing tools put the Wi-Fi firmware back ([Requirements](#requirements)).
+
 ## How it works
 
 ```
@@ -220,14 +224,18 @@ pip install 'stadiacast[gamepad]'       # once; offers to install the ViGEmBus d
 stadiacast --gamepad vigem              # one virtual pad per controller
 ```
 
+Only a driver can create a device that Windows and its games see as a controller, so the pad
+needs one extra install, once and with an admin prompt: ViGEmBus, the same driver behind
+DS4Windows, Sunshine and the other tools of this kind. Its author archived the project in 2023
+and 1.22.0 is the final version; it still installs and works on current Windows 10 and 11.
 The `gamepad` extra is the `vgamepad` package, whose installation runs the ViGEmBus driver's
 installer when the driver is not there yet (set `VGAMEPAD_SKIP_VIGEMBUS_INSTALL=true` to skip
 that, for example on a build machine). The release executables bundle `vgamepad` but not the
 driver, which comes from its [releases page](https://github.com/nefarius/ViGEmBus/releases). It
 needs desktop Windows 10 or 11: a ViGEm pad is a virtual Xbox 360 controller that binds to
 Windows' own driver for it, and Windows Server ships without that driver, so the pad never
-plugs in there. Without Windows, the extra or the driver, the receiver stops at start-up with
-one line that says what to install.
+plugs in there and the receiver logs that reason. Without Windows, the extra or the driver, the
+receiver stops at start-up with one line that says what to install.
 
 Every decoded report reaches the pad as XInput fields, from the display link and, once a game
 runs, from the game session, with the standard stick deadzones (`--gamepad-deadzone off` for
