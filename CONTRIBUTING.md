@@ -10,7 +10,7 @@ it does.
 ```sh
 git clone https://github.com/jkfran/stadiacast.git
 cd stadiacast
-uv sync --all-extras          # or: python3 -m venv .venv && . .venv/bin/activate && pip install -e ".[ble,passthrough]" --group dev
+uv sync --all-extras          # or: python3 -m venv .venv && . .venv/bin/activate && pip install -e ".[ble,passthrough,audio,gamepad]" --group dev
 uvx pre-commit install        # optional: ruff, shellcheck and a private-key check on every commit
 ```
 
@@ -21,7 +21,8 @@ make check        # ruff check + ruff format --check + shellcheck + mypy + schem
 make coverage     # the suite with a line and branch coverage report
 ```
 
-CI runs the same on Linux and macOS with Python 3.11 to 3.14.
+CI runs the same on Linux and macOS with Python 3.11 to 3.14; the manual Windows lab workflow runs
+the suite, the Windows-only drivers and the Windows executables on a Windows runner.
 
 ## Tests
 

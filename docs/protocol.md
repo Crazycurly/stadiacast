@@ -70,7 +70,7 @@ id as `last_message.id` on the next poll; the receiver re-sends until acked.
 in the `live` preset). `--gmsg-ack-release` can release the ACK poll early after DTLS connects;
 measured live, that only made a queued Clearcut upload run sooner.
 
-## 4. The WebRTC session (`schemas/webrtc_sdp.proto`, `rtc.py`)
+## 4. The WebRTC session (`schemas/webrtc_sdp.proto`, `rtc/`)
 
 Signaling is protobuf, not text SDP: `RtcSdpOffer` / `RtcSdpAnswer` carry ICE ufrag and
 password, the DTLS fingerprint, codecs, SSRCs and flags. The answer echoes what must match the
