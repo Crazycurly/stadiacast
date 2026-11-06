@@ -10,8 +10,9 @@ from pathlib import Path
 import pytest
 
 from stadiacast import __version__
-from stadiacast.cli import DEFAULT_CERT, DEFAULT_KEY, parse_args
+from stadiacast.cli import DEFAULT_CERT, DEFAULT_KEY, main, parse_args
 from stadiacast.config import PRESETS
+from stadiacast.helpers import DNS_SINK, HELPERS, SNTP_SERVER, helper_command
 
 SRC = str(Path(__file__).resolve().parents[1] / "src")
 
@@ -87,16 +88,21 @@ def test_audio_flags():
             parse_args(bad)
 
 
-def test_helpers_run_through_the_executable_when_frozen(monkeypatch, capsys):
-    import sys
-
-    from stadiacast.cli import main
-    from stadiacast.receiver import helper_command
-
+def test_every_helper_command_line_runs_its_helper():
+    """The names the receiver spawns are real modules: each command line starts its helper (``--help``)."""
+    env = {**os.environ, "PYTHONPATH": SRC}
     expected = [sys.executable, "-m", "stadiacast.helpers.dns_sink", "--port", "5353"]
-    assert helper_command("dns_sink", ["--port", "5353"]) == expected
+    assert helper_command(DNS_SINK, ["--port", "5353"]) == expected
+    for name in HELPERS:
+        out = subprocess.run(
+            helper_command(name, ["--help"]), capture_output=True, text=True, env=env, check=True, timeout=60
+        )
+        assert "--log" in out.stdout
+
+
+def test_helpers_run_through_the_executable_when_frozen(monkeypatch, capsys):
     monkeypatch.setattr(sys, "frozen", True, raising=False)
-    assert helper_command("sntp_server", []) == [sys.executable, "--helper", "sntp_server"]
+    assert helper_command(SNTP_SERVER, []) == [sys.executable, "--helper", "sntp_server"]
     assert main(["--helper", "nothing"]) == 2
     assert "dns_sink, sntp_server" in capsys.readouterr().err
     with pytest.raises(SystemExit) as exc:

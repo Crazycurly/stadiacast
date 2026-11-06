@@ -13,6 +13,7 @@ from typing import Any
 from stadiacast import __version__
 from stadiacast.config import AUDIO_APPLICATIONS, PRESETS, Config
 from stadiacast.game_session import GAME_FRAMINGS, GAME_KEY_MAX, HAPTICS_WATCHDOG_S
+from stadiacast.helpers import HELPER_FLAG, run_helper
 from stadiacast.receiver import Receiver
 from stadiacast.rtc import WIRE_ID_DC_RPC_DISPLAY, wire_id_valid
 
@@ -447,24 +448,9 @@ async def amain(cfg: Config) -> int:
     return 0
 
 
-HELPERS = ("dns_sink", "sntp_server")
-
-
-def run_helper(argv: Sequence[str]) -> int:
-    """``stadiacast --helper NAME ...``: run a helper in this process (the frozen executable has no
-    interpreter to run ``python -m stadiacast.helpers.NAME``, so the receiver re-launches itself)."""
-    if not argv or argv[0] not in HELPERS:
-        print(f"stadiacast --helper needs one of {', '.join(HELPERS)}", file=sys.stderr)
-        return 2
-    import importlib
-
-    module = importlib.import_module(f"stadiacast.helpers.{argv[0]}")
-    return int(module.main(list(argv[1:])))
-
-
 def main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
-    if args[:1] == ["--helper"]:
+    if args[:1] == [HELPER_FLAG]:  # the frozen executable re-launched as one of its helpers
         return run_helper(args[1:])
     cfg = parse_args(args)
     try:

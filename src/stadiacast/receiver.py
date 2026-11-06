@@ -18,7 +18,6 @@ import datetime
 import json
 import os
 import re
-import sys
 import time
 import traceback
 from typing import Any
@@ -31,6 +30,7 @@ from stadiacast import SERVER_NAME, __version__
 from stadiacast.certs import ensure_certificate, resolve_clock_pin
 from stadiacast.config import CLEARCUT_HOSTS, Config
 from stadiacast.controller import ControllerSession
+from stadiacast.helpers import DNS_SINK, SNTP_SERVER, helper_command
 from stadiacast.http_server import HttpRequest, HttpResponse, HttpServer
 from stadiacast.log import EventLog
 from stadiacast.netutil import fetch_upstream, local_ip_towards
@@ -41,14 +41,6 @@ from stadiacast.virtual_gamepad import VirtualGamepads
 MAX_CONTROLLERS = 8
 
 RPC_PATH = re.compile(r"^/v1:([A-Za-z0-9_]+)$")
-
-
-def helper_command(module: str, args: list[str]) -> list[str]:
-    """The command line for ``stadiacast.helpers.<module>``: ``python -m`` normally, or the frozen
-    executable re-launched with ``--helper`` (there is no interpreter to run ``-m`` in a bundle)."""
-    if getattr(sys, "frozen", False):
-        return [sys.executable, "--helper", module, *args]
-    return [sys.executable, "-m", f"stadiacast.helpers.{module}", *args]
 
 
 class Receiver:
@@ -165,11 +157,11 @@ class Receiver:
         )
         self.log.close()
 
-    async def _spawn_helper(self, module: str, args: list[str], out_name: str) -> asyncio.subprocess.Process:
-        """Run a helper process with its output in the run directory (see :func:`helper_command`)."""
+    async def _spawn_helper(self, name: str, args: list[str], out_name: str) -> asyncio.subprocess.Process:
+        """Run a helper process with its output in the run directory (see :mod:`stadiacast.helpers`)."""
         assert self.cfg.log_dir is not None
         with open(os.path.join(self.cfg.log_dir, out_name), "ab") as out:
-            return await asyncio.create_subprocess_exec(*helper_command(module, args), stdout=out, stderr=out)
+            return await asyncio.create_subprocess_exec(*helper_command(name, args), stdout=out, stderr=out)
 
     async def _start_dns(self) -> None:
         assert self.cfg.log_dir is not None and self.cfg.dns_upstream is not None and self.cfg.advertise_ip is not None
@@ -186,7 +178,7 @@ class Receiver:
             # letting a queued v1:ResolveDiscovery reach the wire.
             nxdomain = list(CLEARCUT_HOSTS)
             args.extend(arg for host in nxdomain for arg in ("--nxdomain", host))
-        self._dns_proc = await self._spawn_helper("dns_sink", args, "dns.out")
+        self._dns_proc = await self._spawn_helper(DNS_SINK, args, "dns.out")
         self.log(
             "dns_sink_started",
             pid=self._dns_proc.pid,
@@ -201,7 +193,7 @@ class Receiver:
         clock, so answer SNTP ourselves (the DNS sink points the name at us)."""
         assert self.cfg.log_dir is not None
         args = ["--controller-ip", self.cfg.controller_ip, "--log", os.path.join(self.cfg.log_dir, "sntp.jsonl")]
-        self._sntp_proc = await self._spawn_helper("sntp_server", args, "sntp.out")
+        self._sntp_proc = await self._spawn_helper(SNTP_SERVER, args, "sntp.out")
         self.log("sntp_server_started", pid=self._sntp_proc.pid, port=123)
 
     # ---- the controller registry ---------------------------------------------------------
