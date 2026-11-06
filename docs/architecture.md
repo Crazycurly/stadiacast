@@ -6,8 +6,11 @@ answers it lives and how the pieces talk to each other.
 
 ## Processes
 
-One `stadiacast` process serves every controller. It spawns two helpers next to itself (both
-`python -m stadiacast.helpers.<name>`, logging JSON Lines into the run directory):
+One `stadiacast` process serves every controller. It spawns two helpers next to itself, both
+logging JSON Lines into the run directory. `stadiacast.helpers` is their launcher:
+`helper_command()` builds `python -m stadiacast.helpers.<name>`, or, in a standalone executable
+that has no interpreter to run `-m` with, the executable itself with `--helper <name>`, which
+`run_helper()` dispatches.
 
 | process | module | why separate |
 |---|---|---|
@@ -25,6 +28,7 @@ Receiver                                   one per process (receiver.py)
  ├── HttpServer                            HTTPS :443 + HTTP :80/:8008, SNI callback (http_server.py)
  ├── Protos                                the protobuf schemas, loaded once (protos.py)
  ├── EventLog                              server.jsonl + console echo (log.py)
+ ├── VirtualGamepads                       --gamepad: one virtual pad per controller (virtual_gamepad.py)
  └── ControllerSession  c0, c1, ...        one per controller (controller.py)
       ├── RtcEndpoint "input"              UDP socket of the display link (rtc/endpoint.py)
       │    ├── StunMessage / ICE checks    rtc/stun.py
@@ -34,7 +38,7 @@ Receiver                                   one per process (receiver.py)
       ├── display RPC state machine        GetControllerState → READY → input (controller.py)
       ├── InputDecoder                     InputProtocolMessage stream (input_protocol.py)
       ├── AudioSender                      Opus to the headset jack, paced RTP on the media pair (audio.py)
-      │                                   ⇢ VirtualGamepads  one pad per controller, owned by the Receiver (virtual_gamepad.py)
+      │    └── BlockCapture                PCM for system / device:NAME (capture.py; loopback.py on Windows)
       └── GameSession                      StartGame, proxied RPCs, rumble (game_session.py)
            ├── RtcEndpoint "game"          second UDP socket, own certificate
            └── InputDecoder
@@ -51,13 +55,31 @@ signaling answer, the display-link endpoint and its callbacks, the post-DTLS RPC
 (`_display_rpc_loop`, `_on_rpc`, `_answer_request`) and the input events. Its `session` dict is
 what `/_status` publishes; the `display` sub-dict is reset on every new boot. With
 `--audio-source` it also owns an `AudioSender` (`audio.py`): started once the display link is
-READY, it paces Opus frames onto the display link's media pair under the stream's own SSRC.
+READY, it paces Opus frames onto the display link's media pair under the stream's own SSRC. The
+session keeps the stream's gain and libopus application across starts, since a sender only
+lives while it plays.
+
+**`AudioSender`** runs ffmpeg as its encoder and starts it again when it exits. For `system` and
+`device:NAME` it also runs a `BlockCapture` (`capture.py`): a `CaptureDevice` says which PCM
+format its device delivers and makes a fresh capture for every ffmpeg run, and the capture hands
+over 20 ms blocks through a bounded queue. `PortAudioCapture` (macOS, Linux) and the WASAPI
+loopback's `Capture` (`loopback.py`, Windows) only open their device and push blocks. One
+worker-thread call per block reads it, scales it by the Windows volume (`sysvolume.py`) and
+measures its level, so no per-sample work runs on the event loop, which then writes the block to
+ffmpeg's stdin.
 
 **`GameSession`** is the game phase of one controller: it sends `StartGame`, answers the
 `InitializationRequest` the controller proxies through the display link, runs the second
 ICE/DTLS endpoint, decodes input on sub-channel `0x66` and drives the rumble motors with the
 haptics-watchdog refresh. It talks to its controller through `ctl.send_rpc`, `ctl.mark_input`
 and `ctl.emit_input_event`.
+
+**`VirtualGamepads`** (`--gamepad`) belongs to the `Receiver`, which hands it every input event
+it publishes (`publish_event`), from the display link and the game session alike
+(`GamepadState.from_event` reads both shapes). It creates one pad per controller label in a
+worker thread, forwards the motor levels a game sets to that controller's `GameSession`, and
+lets go of the pad's state when the controller reboots, which is also when a pad that could not
+be created is tried again.
 
 **`RtcEndpoint`** is one UDP socket and one peer. It demultiplexes datagrams (STUN / DTLS /
 RTP), runs the connectivity checks and keepalives, drives the DTLS handshake through pyOpenSSL
@@ -131,4 +153,7 @@ runs with `--preset live` on ports 53/80/123/443, which `tools/start_receiver.sh
 | a new display RPC the controller sends | `ControllerSession._answer_request` |
 | a new message on the game session | `GameSession._on_app_data` / `_on_rpc` |
 | an output for the decoded input | consume `Receiver.wait_event()` / `publish_event()` events; `virtual_gamepad.py` is one |
+| a new audio capture | a `CaptureDevice` and `BlockCapture` pair (`capture.py`; `loopback.py` is one), chosen in `Source.device` (`audio.py`) |
+| a new helper process | a module under `helpers/` with a `main(argv)`, named in `HELPERS` (`helpers/__init__.py`), started by `Receiver._spawn_helper` |
+| something the user must install or configure | raise `SetupError` (`errors.py`) with a message that says what to install; the command line prints it as one line |
 | a schema change | the `.proto` under `schemas/`, then `python -m stadiacast.schema_compiler` |
