@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 
 from stadiacast import controller
+from stadiacast.audio import AudioSender
 from stadiacast.errors import SetupError
 from stadiacast.receiver import Receiver
 from tests.fake_controller import FakeController
@@ -147,6 +148,42 @@ def test_get_reads_the_stream_and_only_post_changes_it(tmp_path) -> None:
             assert st == 400 and out["actions"] == ["start", "stop", "volume", "mode"]
             st, out = await call(fc, rx, "POST", {"do": "stop"})
             assert (st, out["playing"]) == (200, False)
+        finally:
+            fc.close()
+            await rx.stop()
+
+    asyncio.run(run())
+
+
+@pytest.mark.usefixtures("sources")
+def test_the_encoder_settings_reach_the_sender(tmp_path, monkeypatch) -> None:
+    """``--audio-application`` and ``--audio-follow-volume`` build the sender; a start may switch the application."""
+    built: list[dict[str, Any]] = []
+
+    class RecordingSender(AudioSender):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            built.append(kwargs)
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(controller, "AudioSender", RecordingSender)
+
+    async def run() -> None:
+        rx = make_receiver(tmp_path, audio_application="audio", audio_follow_volume=False)
+        await rx.start()
+        fc = await connect_firmware_flow(rx)
+        cs = single(rx)
+        try:
+            await asyncio.wait_for(fc.display_ready.wait(), 5)
+            await fc.keepalive()
+            st, first = await call(fc, rx, "POST", {"do": "start", "source": "tone"})
+            assert st == 200 and cs.audio_state()["application"] == "audio"
+            assert [(kw["application"], kw["follow_system_volume"]) for kw in built] == [("audio", False)]
+            st, again = await call(fc, rx, "POST", {"do": "start", "source": "tone", "application": "lowdelay"})
+            assert st == 200 and cs.audio_state()["application"] == "lowdelay"
+            assert again["ssrc"] == first["ssrc"] and len(built) == 1  # the same stream, restarted
+            st, out = await call(fc, rx, "POST", {"do": "start", "source": "tone", "application": "voip"})
+            assert st == 400 and "voip" in out["error"]
+            assert cs.audio_state()["application"] == "lowdelay"
         finally:
             fc.close()
             await rx.stop()

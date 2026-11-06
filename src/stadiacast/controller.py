@@ -17,6 +17,7 @@ from google.protobuf.message import DecodeError
 
 from stadiacast import SERVER_NAME, signaling
 from stadiacast.audio import AudioSender, Source, source_from_spec
+from stadiacast.config import AUDIO_APPLICATIONS
 from stadiacast.errors import SetupError
 from stadiacast.game_session import GameSession
 from stadiacast.gamepad import GamepadState
@@ -146,7 +147,9 @@ class ControllerSession:
         self._rpc_pending: dict[int, str] = {}  # tickets of our requests -> purpose
         self._last_input: GamepadState | None = None  # previous ControllerToDisplay #3 report
         self._audio: AudioSender | None = None  # headset jack, created when a stream starts
-        self._audio_volume = self.cfg.audio_volume  # the stream's gain, kept across starts and stops
+        # The stream's settings, kept across starts and stops (a sender only lives while it plays).
+        self._audio_volume = self.cfg.audio_volume
+        self._audio_application = self.cfg.audio_application
         self._audio_task: asyncio.Task[None] | None = None  # this boot's --audio-source autostart
 
     def __repr__(self) -> str:
@@ -252,16 +255,28 @@ class ControllerSession:
         return {"ok": ticket is not None, "ticket": ticket, "mode": int(mode)}
 
     async def audio_start(
-        self, source: Source | None = None, *, srtp: bool = True, volume: float | None = None
+        self,
+        source: Source | None = None,
+        *,
+        srtp: bool = True,
+        volume: float | None = None,
+        application: str | None = None,
     ) -> dict[str, Any]:
         """Send audio to the headset jack until :meth:`audio_stop` (or the link goes away).
 
         ``source=None`` starts the pacer with no encoder: the caller supplies the Opus frames
         through :meth:`audio_feed`.  That is what the tests use, and what a caller with its
-        own encoder would do.  ``volume`` becomes the session's gain (see :meth:`audio_set_volume`).
+        own encoder would do.  ``volume`` and ``application`` (one of
+        :data:`~stadiacast.config.AUDIO_APPLICATIONS`) become the session's, for this start and
+        the later ones (see :meth:`audio_set_volume`).  A running stream keeps its sender, and so
+        its SSRC and sequence numbers, across a restart.
         """
+        if application is not None and application not in AUDIO_APPLICATIONS:
+            raise ValueError(f"unknown application {application!r}; use {' or '.join(AUDIO_APPLICATIONS)}")
         if volume is not None:
             self._audio_volume = _clamp_volume(volume)
+        if application is not None:
+            self._audio_application = application
         if self._audio is None:
             self._audio = AudioSender(
                 self.endpoint,
@@ -269,9 +284,12 @@ class ControllerSession:
                 srtp=srtp,
                 bitrate_kbps=self.cfg.audio_bitrate_kbps,
                 volume=self._audio_volume,
+                application=self._audio_application,
+                follow_system_volume=self.cfg.audio_follow_volume,
             )
         else:
             self._audio.volume = self._audio_volume
+            self._audio.application = self._audio_application
         switched: dict[str, Any] | None = None
         if self.cfg.audio_mode:
             switched = self.set_audio_mode(self.cfg.audio_mode, f3=True)
@@ -282,13 +300,16 @@ class ControllerSession:
             raise
         return {**info, "audio_mode": switched} if switched is not None else info
 
-    async def audio_start_spec(self, spec: str, volume: float | None = None) -> dict[str, Any]:
+    async def audio_start_spec(
+        self, spec: str, *, volume: float | None = None, application: str | None = None
+    ) -> dict[str, Any]:
         """``/_audio``: start from a ``--audio-source`` spelling.
 
         A bad spelling is a ``ValueError``, a capture this computer cannot open a
         :class:`~stadiacast.errors.SetupError`.
         """
-        return await self.audio_start(await self._resolve_source(spec), volume=volume)
+        source = await self._resolve_source(spec)
+        return await self.audio_start(source, volume=volume, application=application)
 
     @staticmethod
     async def _resolve_source(spec: str) -> Source:

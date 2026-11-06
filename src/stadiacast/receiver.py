@@ -444,8 +444,9 @@ class Receiver:
         """``/_audio``: the headset stream.
 
         ``GET`` shows it and ignores any body, so a read never changes the stream.  ``POST`` takes
-        ``{"do": ...}``: ``start`` (``source`` as for ``--audio-source``, optional ``volume``),
-        ``stop``, ``volume`` (``volume``) or ``mode`` (``mode``, the SetAudioModeRequest value).
+        ``{"do": ...}``: ``start`` (``source`` as for ``--audio-source``, optional ``volume`` and
+        ``application`` as for ``--audio-application``), ``stop``, ``volume`` (``volume``) or
+        ``mode`` (``mode``, the SetAudioModeRequest value).
         """
         if req.method == "GET":
             picked = self._pick(req)
@@ -467,7 +468,9 @@ class Receiver:
         action = body.get("do")
         try:
             if action == "start":
-                out = await picked.audio_start_spec(str(body.get("source") or "tone"), volume=body.get("volume"))
+                out = await picked.audio_start_spec(
+                    str(body.get("source") or "tone"), volume=body.get("volume"), application=body.get("application")
+                )
             elif action == "stop":
                 out = await picked.audio_stop()
             elif action == "volume":

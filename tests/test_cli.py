@@ -79,6 +79,12 @@ def test_version_flag(capsys):
 def test_audio_flags():
     cfg = parse_args(["--audio-source", "system", "--audio-volume", "0.5"])
     assert (cfg.audio_source, cfg.audio_volume) == ("system", 0.5)
+    assert (cfg.audio_application, cfg.audio_follow_volume) == ("lowdelay", True)  # games, the slider followed
+    cfg = parse_args(["--audio-application", "audio", "--audio-follow-volume", "off"])
+    assert (cfg.audio_application, cfg.audio_follow_volume) == ("audio", False)
+    for bad in (["--audio-application", "voip"], ["--audio-follow-volume", "yes"]):
+        with pytest.raises(SystemExit):
+            parse_args(bad)
 
 
 def test_helpers_run_through_the_executable_when_frozen(monkeypatch, capsys):

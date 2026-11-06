@@ -14,6 +14,10 @@ CLEARCUT_HOSTS: tuple[str, ...] = ("play.googleapis.com",)
 #: Controller address of the reference rig (macOS Internet Sharing hotspot, Mac = 192.168.2.1).
 DEFAULT_CONTROLLER_IP = "192.168.2.2"
 
+#: The libopus ``-application`` values the headset stream offers: ``lowdelay`` for games (the
+#: shortest encoder delay), ``audio`` for music (the best quality at the bitrate).
+AUDIO_APPLICATIONS: tuple[str, ...] = ("lowdelay", "audio")
+
 
 @dataclass
 class Config:
@@ -66,10 +70,14 @@ class Config:
     rtcp_interval: float = 1.0  # display-side RTCP RR cadence after DTLS (0 disables)
     ack_mode: str = "rtp"  # rtp | none: echo InputProtocolMessage{ack_sequence_number}
     input_payload_type: int = 96
-    audio_source: str = ""  # '' off | tone | file:PATH: started once the display link is READY
+
+    # -- headset audio ---------------------------------------------------------------------
+    audio_source: str = ""  # '' off | tone | file:PATH | system | device:NAME: started once the link is READY
     audio_mode: int = 2  # SetAudioModeRequest before the stream: 2 = WebRTC Opus (the jack path), 0 = leave it alone
     audio_bitrate_kbps: int = 64  # Opus encoder bitrate
+    audio_application: str = "lowdelay"  # one of AUDIO_APPLICATIONS, the libopus application
     audio_volume: float = 1.0  # linear gain before encoding (above 1 a limiter guards against clipping)
+    audio_follow_volume: bool = True  # Windows: scale the loopback capture by the volume slider (False: before it)
 
     # -- virtual gamepad (the input as a pad on this PC) -----------------------------------
     gamepad: str = "off"  # off | vigem: one virtual Xbox 360 pad per controller (Windows, ViGEmBus); implies StartGame

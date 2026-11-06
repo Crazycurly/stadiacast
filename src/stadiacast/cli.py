@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from stadiacast import __version__
-from stadiacast.config import PRESETS, Config
+from stadiacast.config import AUDIO_APPLICATIONS, PRESETS, Config
 from stadiacast.game_session import GAME_FRAMINGS, GAME_KEY_MAX, HAPTICS_WATCHDOG_S
 from stadiacast.receiver import Receiver
 from stadiacast.rtc import WIRE_ID_DC_RPC_DISPLAY, wire_id_valid
@@ -193,10 +193,24 @@ def build_parser(preset: str | None = None) -> argparse.ArgumentParser:
     )
     g.add_argument("--audio-bitrate", type=int, default=64, help="Opus bitrate in kbit/s")
     g.add_argument(
+        "--audio-application",
+        choices=AUDIO_APPLICATIONS,
+        default="lowdelay",
+        help="what the Opus encoder favours: lowdelay for games (the shortest delay), audio for music (the best "
+        "quality at the bitrate)",
+    )
+    g.add_argument(
         "--audio-volume",
         type=float,
         default=1.0,
         help="gain before encoding (1 = as captured; above 1 a limiter guards against clipping)",
+    )
+    g.add_argument(
+        "--audio-follow-volume",
+        choices=("on", "off"),
+        default="on",
+        help="Windows: scale the loopback capture by the volume slider, so the slider, mute and the media keys "
+        "reach the headset (off: the mix before the slider)",
     )
     g.add_argument(
         "--audio-devices",
@@ -385,7 +399,9 @@ def parse_args(argv: Sequence[str] | None = None) -> Config:
         input_payload_type=a.input_payload_type,
         audio_source=a.audio_source,
         audio_bitrate_kbps=a.audio_bitrate,
+        audio_application=a.audio_application,
         audio_volume=a.audio_volume,
+        audio_follow_volume=a.audio_follow_volume == "on",
         gamepad=a.gamepad,
         gamepad_deadzone=a.gamepad_deadzone == "on",
         audio_mode=a.audio_mode,
