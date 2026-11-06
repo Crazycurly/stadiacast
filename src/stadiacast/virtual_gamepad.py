@@ -21,6 +21,7 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol
 
+from stadiacast.errors import SetupError
 from stadiacast.gamepad import XINPUT_LEFT_DEADZONE, XINPUT_RIGHT_DEADZONE, GamepadState
 
 if TYPE_CHECKING:
@@ -218,17 +219,17 @@ class VirtualGamepads:
 
     @classmethod
     def create(cls, cfg: Config, log: Callable[..., Any], rx: Receiver) -> VirtualGamepads:
-        """The backend ``--gamepad`` names, or a ``RuntimeError`` saying what is missing."""
+        """The backend ``--gamepad`` names, or a :class:`SetupError` saying what to install."""
         if cfg.gamepad != "vigem":
             raise ValueError(f"unknown --gamepad {cfg.gamepad!r}; use off or vigem")
         if sys.platform != "win32":
-            raise RuntimeError("--gamepad vigem is Windows only: it drives the ViGEmBus driver through vgamepad")
+            raise SetupError("--gamepad vigem is Windows only: it drives the ViGEmBus driver through vgamepad")
         try:
             import vgamepad  # noqa: F401
         except ImportError as e:
-            raise RuntimeError("--gamepad vigem needs the gamepad extra: pip install 'stadiacast[gamepad]'") from e
+            raise SetupError("--gamepad vigem needs the gamepad extra: pip install 'stadiacast[gamepad]'") from e
         except RuntimeError as e:  # vgamepad connects to the bus on import; no driver, no import
-            raise RuntimeError(
+            raise SetupError(
                 f"--gamepad vigem needs the ViGEmBus driver installed (vgamepad said: {e}); "
                 "get it from https://github.com/nefarius/ViGEmBus/releases"
             ) from e

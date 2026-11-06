@@ -9,6 +9,7 @@ from typing import ClassVar
 import pytest
 
 from stadiacast.config import Config
+from stadiacast.errors import SetupError
 from stadiacast.gamepad import Button, GamepadState
 from stadiacast.input_protocol import InputDecoder
 from stadiacast.log import EventLog
@@ -231,7 +232,7 @@ def test_the_vigem_backend_is_windows_only_and_the_flags_parse() -> None:
     assert (cfg.gamepad, cfg.gamepad_deadzone) == ("vigem", False)
     assert parse_args([]).gamepad == "off" and parse_args([]).gamepad_deadzone is True
     if sys.platform != "win32":
-        with pytest.raises(RuntimeError, match="Windows only"):
+        with pytest.raises(SetupError, match="Windows only"):
             VirtualGamepads.create(Config(cert="x", key="y", gamepad="vigem"), EventLog(None, echo=False), None)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="unknown --gamepad"):
         VirtualGamepads.create(Config(cert="x", key="y", gamepad="bogus"), EventLog(None, echo=False), None)  # type: ignore[arg-type]
@@ -246,10 +247,10 @@ def test_a_missing_driver_or_extra_is_a_clear_error(tmp_path, monkeypatch) -> No
     monkeypatch.syspath_prepend(str(tmp_path))
     monkeypatch.delitem(sys.modules, "vgamepad", raising=False)
     cfg = Config(cert="x", key="y", gamepad="vigem")
-    with pytest.raises(RuntimeError, match=r"ViGEmBus driver installed .*BUS_NOT_FOUND"):
+    with pytest.raises(SetupError, match=r"ViGEmBus driver installed .*BUS_NOT_FOUND"):
         VirtualGamepads.create(cfg, EventLog(None, echo=False), None)  # type: ignore[arg-type]
     monkeypatch.setitem(sys.modules, "vgamepad", None)
-    with pytest.raises(RuntimeError, match="gamepad extra"):
+    with pytest.raises(SetupError, match="gamepad extra"):
         VirtualGamepads.create(cfg, EventLog(None, echo=False), None)  # type: ignore[arg-type]
 
 
