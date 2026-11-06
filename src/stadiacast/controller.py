@@ -17,6 +17,7 @@ from google.protobuf.message import DecodeError
 
 from stadiacast import SERVER_NAME, signaling
 from stadiacast.audio import AudioSender, Source, source_from_spec
+from stadiacast.errors import SetupError
 from stadiacast.game_session import GameSession
 from stadiacast.gamepad import GamepadState
 from stadiacast.http_server import HttpResponse
@@ -284,8 +285,21 @@ class ControllerSession:
         return {**info, "audio_mode": switched} if switched is not None else info
 
     async def audio_start_spec(self, spec: str, volume: float | None = None) -> dict[str, Any]:
-        """``/_audio``: start from a ``--audio-source`` spelling (``ValueError`` on a bad one)."""
-        return await self.audio_start(source_from_spec(spec), volume=volume)
+        """``/_audio``: start from a ``--audio-source`` spelling.
+
+        A bad spelling is a ``ValueError``, a capture this computer cannot open a
+        :class:`~stadiacast.errors.SetupError`.
+        """
+        return await self.audio_start(await self._resolve_source(spec), volume=volume)
+
+    @staticmethod
+    async def _resolve_source(spec: str) -> Source:
+        """:func:`~stadiacast.audio.source_from_spec` in a worker thread.
+
+        Resolving a capture enumerates the PortAudio devices, initialises COM on Windows or runs
+        ``pactl`` on Linux; on the event loop that would stall every controller's DTLS and RTP.
+        """
+        return await asyncio.to_thread(source_from_spec, spec)
 
     async def audio_set_volume(self, volume: float) -> dict[str, Any]:
         """Change the gain of this controller's stream, the one playing and the ones started later.
@@ -329,17 +343,19 @@ class ControllerSession:
             return
         if self._audio is not None and self._audio.playing:
             return
-        try:
-            source = source_from_spec(self.cfg.audio_source)
-        except (RuntimeError, ValueError) as e:
-            self.log("audio_source_invalid", spec=self.cfg.audio_source, error=str(e))
-            return
-        self._audio_task = asyncio.get_running_loop().create_task(self._audio_autostart(source))
+        self._audio_task = asyncio.get_running_loop().create_task(self._audio_autostart(self.cfg.audio_source))
 
-    async def _audio_autostart(self, source: Source) -> None:
+    async def _audio_autostart(self, spec: str) -> None:
+        try:
+            source = await self._resolve_source(spec)
+        except (SetupError, ValueError) as e:
+            self.log("audio_source_invalid", spec=spec, error=str(e))
+            return
+        if self._audio is not None and self._audio.playing:
+            return  # /_audio started a stream while the source was being resolved
         try:
             await self.audio_start(source)
-        except Exception as e:  # no ffmpeg, no sound card: log it, never take the link down
+        except Exception as e:  # no ffmpeg, a sound card that refused the source: log it, never take the link down
             self.log("audio_start_failed", error=repr(e))
 
     def _stop_audio(self) -> None:
