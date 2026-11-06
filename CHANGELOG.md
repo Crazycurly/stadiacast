@@ -67,6 +67,9 @@ All notable changes to this project are documented here. The format follows
   READY; the gain is kept for the next start.
 - `GET /_audio` never changes the stream: only a `POST` runs an action, and other methods get
   405.
+- `/_audio` answers 400 only for what the caller can fix (a missing or malformed field, a bad
+  source spelling, a `SetupError`); a bug is a 500 with its traceback in `handler_error`, no
+  longer a 400 carrying its message.
 - The headset audio source is resolved in a worker thread, so listing the sound devices,
   setting up COM and running `pactl` no longer stall every controller's link.
 - Scaling and level metering of captured system audio no longer run on the event loop shared
