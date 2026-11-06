@@ -453,7 +453,11 @@ class AudioSender:
 
     # ---- the PCM pipe (system and device captures) -----------------------------
     async def _feed_pcm(self, stdin: asyncio.StreamWriter, source: Source) -> None:
-        """Write the capture's PCM blocks to ffmpeg's stdin, scaled by the system volume."""
+        """Write the capture's PCM blocks to ffmpeg's stdin, scaled by the system volume.
+
+        However this ends (the capture fails to start, the capture ends, ffmpeg goes away), stdin
+        is closed: ffmpeg then exits, and the supervisor starts both again.
+        """
         try:
             cap = source.open_capture() if source.open_capture else None
             if cap is None:
@@ -462,6 +466,7 @@ class AudioSender:
         except Exception as e:
             self.stats.notes.append(f"capture failed: {e!r}")
             self.log("audio_capture_failed", error=repr(e))
+            stdin.close()
             return
         self._capture = cap
         self.log("audio_capture", device=cap.name, rate=cap.rate, channels=cap.channels)

@@ -561,6 +561,45 @@ def test_a_pcm_source_is_piped_into_ffmpeg(monkeypatch, gain: float, application
     asyncio.run(run())
 
 
+class _BusyCapture(BlockCapture):
+    """A device that refuses to open, the way a busy or just unplugged one does."""
+
+    def __init__(self) -> None:
+        super().__init__("busy", 48000, 2)
+
+    def start(self) -> None:
+        raise OSError("device busy")
+
+    def stop(self) -> None:
+        pass
+
+
+@pytest.mark.skipif(ffmpeg_path() is None, reason="needs ffmpeg (with libopus) on PATH")
+def test_a_capture_that_fails_to_start_is_tried_again() -> None:
+    """ffmpeg is restarted with a fresh capture instead of waiting forever on a pipe nobody writes."""
+
+    async def run() -> None:
+        ep = _StubEndpoint()
+        sender = AudioSender(ep, srtp=False)
+        captures = iter([_BusyCapture(), _SineCapture()])
+        source = Source(
+            ["-f", "s16le", "-ar", "48000", "-ac", "2", "-i", "pipe:0"],
+            "flaky device",
+            pcm=True,
+            open_capture=lambda: next(captures),
+        )
+        await sender.start(source)
+        try:
+            await wait_for(lambda: len(ep.sent) >= 5, timeout=10)
+        finally:
+            await sender.stop()
+        stats = sender.stats.snapshot()
+        assert stats["ffmpeg_restarts"] == 1
+        assert stats["notes"][0] == "capture failed: OSError('device busy')"
+
+    asyncio.run(run())
+
+
 def test_the_audio_endpoint(tmp_path) -> None:
     async def run() -> None:
         rx = make_receiver(tmp_path)
