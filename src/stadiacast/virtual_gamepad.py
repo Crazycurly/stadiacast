@@ -104,7 +104,9 @@ def wait_until_plugged_in(
     """Send the first report once Windows has finished plugging the new pad in.
 
     ViGEm answers ``VIGEM_ERROR_TARGET_NOT_PLUGGED_IN`` to a report sent before the plug-in
-    completes, which takes a moment after the target is added (seconds on a slow machine).
+    completes, which takes a moment after the target is added (seconds on a slow machine). A pad
+    still unplugged at ``timeout`` means a Windows without the Xbox 360 controller driver the pad
+    binds to (Windows Server): a ``SetupError`` that says so.
     """
     deadline = time.monotonic() + timeout
     while True:
@@ -112,8 +114,14 @@ def wait_until_plugged_in(
             update()
             return
         except RuntimeError as e:
-            if "NOT_PLUGGED_IN" not in str(e) or time.monotonic() >= deadline:
+            if "NOT_PLUGGED_IN" not in str(e):
                 raise
+            if time.monotonic() >= deadline:
+                raise SetupError(
+                    f"Windows did not plug the pad in within {timeout:g} s ({e}): a ViGEm pad binds to"
+                    " Windows' own Xbox 360 controller driver, which desktop Windows 10 and 11 have"
+                    " and Windows Server lacks"
+                ) from e
             sleep(0.1)
 
 
@@ -260,8 +268,9 @@ class VirtualGamepads:
         try:
             pad = await asyncio.to_thread(self._factory, label)
         except Exception as e:  # ViGEm refused, or Windows never plugged the pad in: no pad until release()
-            self._failed[label] = repr(e)
-            self.log("gamepad_failed", controller=label, error=repr(e))
+            error = str(e) if isinstance(e, SetupError) else repr(e)  # our own wording stays plain text
+            self._failed[label] = error
+            self.log("gamepad_failed", controller=label, error=error)
             return
         finally:
             self._creating.pop(label, None)

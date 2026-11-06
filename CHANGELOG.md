@@ -48,6 +48,9 @@ All notable changes to this project are documented here. The format follows
   `--gamepad vigem` a computer without Windows, the `gamepad` extra or the ViGEmBus driver.
 - `/_status` lists a controller whose virtual pad could not be created under `gamepads`, as
   `{"error": "..."}`.
+- A pad that Windows never plugs in is reported, in the log and under `gamepads`, as the
+  missing Xbox 360 controller driver that desktop Windows 10 and 11 have and Windows Server
+  lacks, instead of the driver's raw error.
 - `POST /_audio` must name an action: `{"do": "state"}` is gone, `GET /_audio` shows the stream.
 - The headset stream's state (`/_audio`, `playback` in `/_status`) reports
   `follow_system_volume`, and no longer reports the unused `first_rtp_ts`, `last_rtp_ts` and

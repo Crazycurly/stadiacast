@@ -193,6 +193,39 @@ def test_a_failed_pad_shows_its_error_and_is_retried_after_a_reboot(tmp_path) ->
     asyncio.run(run())
 
 
+def test_a_pad_windows_never_plugs_in_names_the_missing_driver(tmp_path) -> None:
+    """The plug-in wait giving up is a ``SetupError``, shown as its plain text in the log and in
+    ``/_status``, not as the repr of the driver's error."""
+
+    def never_plugged(label: str) -> _FakePad:
+        def refused() -> None:
+            raise RuntimeError("Error: VIGEM_ERROR_TARGET_NOT_PLUGGED_IN")
+
+        wait_until_plugged_in(refused, timeout=0.0, sleep=lambda _: None)
+        raise AssertionError(f"the wait returned for {label}")
+
+    async def run() -> None:
+        rx = _with_fake_pads(make_receiver(tmp_path), never_plugged)
+        await rx.start()
+        fc = await connect_firmware_flow(rx)
+        try:
+            await asyncio.wait_for(fc.display_ready.wait(), 5)
+            await fc.keepalive()
+            assert fc.send_input_rpc(buttons=1 << 12)
+            await wait_for(lambda: rx.log.counts.get("gamepad_failed"))
+            error = rx.status()["gamepads"]["c0"]["error"]
+            head = "Windows did not plug the pad in within 0 s (Error: VIGEM_ERROR_TARGET_NOT_PLUGGED_IN)"
+            assert error.startswith(head)
+            assert error.endswith("which desktop Windows 10 and 11 have and Windows Server lacks")
+            record = next(r for r in rx.log.records if r["event"] == "gamepad_failed")
+            assert record["controller"] == "c0" and record["error"] == error
+        finally:
+            fc.close()
+            await rx.stop()
+
+    asyncio.run(run())
+
+
 def test_two_controllers_get_two_pads(tmp_path) -> None:
     async def run() -> None:
         rx = _with_fake_pads(make_receiver(tmp_path, display_rpc_delay=0.05, display_rpc_interval=0.1))
@@ -276,5 +309,6 @@ def test_the_first_report_waits_for_the_plug_in() -> None:
     def never() -> None:
         raise RuntimeError("Error: VIGEM_ERROR_TARGET_NOT_PLUGGED_IN")
 
-    with pytest.raises(RuntimeError, match="NOT_PLUGGED_IN"):
+    expected = r"within 0 s \(Error: VIGEM_ERROR_TARGET_NOT_PLUGGED_IN\).*Windows Server"
+    with pytest.raises(SetupError, match=expected):
         wait_until_plugged_in(never, timeout=0.0, sleep=naps.append)
