@@ -1,7 +1,7 @@
 # Setup
 
-How to put a Stadia Controller and the receiver on one network, obtain a certificate the
-firmware accepts, run the receiver and read what it logs.
+How to put a Stadia Controller and the receiver on one network, what certificate the
+receiver serves, how to run it and how to read what it logs.
 
 ## The reference rig
 
@@ -65,36 +65,27 @@ WPA2-Personal (AES) with protected management frames off, not WPA3.
 
 ## Certificate
 
-The firmware validates the server chain against its built-in **Google Trust Services (GTS)**
-roots and checks nothing else about it: not the hostname, not the validity dates, not
-revocation (all three confirmed on a real controller). Self-signed certificates are rejected
-with the TLS alert `unknown_ca`; the tests use one anyway (`--self-signed`) because the fake
-controller does not check.
+The firmware validates the server chain against its built-in Google Trust Services (GTS)
+roots and checks nothing else: not the hostname, not the validity dates, not revocation. Any
+GTS-issued chain therefore answers every Google name, and a self-signed one is rejected with
+the TLS alert `unknown_ca` (the tests use one anyway, `--self-signed`, because the fake
+controller does not check).
 
-**The built-in credential.** The receiver ships a GTS chain together with its key, so there is
-nothing to obtain: with no certificate configured it serves that one, and the controller
-accepts it. The certificate was issued over ACME for a domain registered for this project and
-then revoked, with reason key compromise, before the key was published. Browsers and TLS
-libraries reject a revoked and soon expired certificate on sight, and GTS will never issue
-another certificate for that key, so the credential is exactly enough for the controller and
-useless for anything else. The receiver logs a `builtin_credential` event with its subject,
-issuer and serial whenever it serves it.
+**The built-in certificate.** With none configured, the receiver serves a GTS chain issued for
+a domain dedicated to the project and revoked, with reason key compromise, before its key was
+published: exactly enough for the controller and useless anywhere else. The log records a
+`builtin_credential` event with its subject, issuer and serial.
 
-**Bringing your own.** A fork, a hosted deployment or anyone who prefers a certificate in their
-own name passes `--cert` (PEM chain, leaf first) and `--key`, or puts the pair under `certs/`
-as `fullchain.pem` and `privkey.pem`; existing files there win over the built-in credential.
-Naming a file that does not exist is an error, never a silent fallback. Any GTS-issued chain
-works for every name the receiver impersonates, and the rest of this section is how to get one
-for free.
-
-You need a domain name whose DNS records you can edit: the ACME challenge below is a TXT
-record. Google's public CA issues certificates for free over ACME, with External Account
-Binding (EAB) credentials you create once in any Google Cloud project (Cloud Shell works):
+**Bringing your own.** Pass `--cert` (PEM chain, leaf first) and `--key`, or put the pair
+under `certs/` as `fullchain.pem` and `privkey.pem`; a pair there wins over the built-in one,
+and a file named on the command line that does not exist is an error. Google's public CA
+issues certificates for free over ACME for a domain whose DNS records you can edit. Use a
+domain dedicated to the receiver, since the certificate is served for Google's names, and
+issue it once: the firmware does not check the dates, so it never needs renewing.
 
 ```sh
 gcloud services enable publicca.googleapis.com          # once, in any GCP project
 gcloud publicca external-account-keys create             # prints keyId + b64MacKey
-brew install certbot                                     # or: pip install certbot
 certbot certonly --manual --preferred-challenges dns \
     --server https://dv.acme-v02.api.pki.goog/directory \
     --email <you@example.org> --agree-tos --no-eff-email \
@@ -102,31 +93,8 @@ certbot certonly --manual --preferred-challenges dns \
     -d receiver.example.org --config-dir ./le --work-dir ./le --logs-dir ./le
 ```
 
-Notes:
-
-- GTS rejects accounts without a contact email, and the EAB flags need the `=` form: a
-  `b64MacKey` starting with `-` is otherwise parsed as an option.
-- Pass the **full chain** (`fullchain.pem`); the intermediate matters.
-- Copy the result to `certs/fullchain.pem` and `certs/privkey.pem` (`chmod 600` the key).
-  Both are ignored by git; never commit them. The `le/` directory certbot wrote can be deleted
-  afterwards, or kept if you want to issue again later.
-
-**No renewal needed.** The firmware checks that the chain leads to a GTS root; it does not
-check the certificate's validity dates (confirmed on a real controller). Issue the certificate
-once and keep the two files. `--clock-pin` is unrelated to this: it serves the controller a
-chosen clock when you want one.
-
-**The certificate's terms.** The receiver serves a certificate for Google's host names, not
-for the domain it was issued to. Google Trust Services' policy (CPS §9.6.3) has subscribers
-install TLS certificates only on servers reachable at the names in the certificate, and the CA
-revokes certificates whose subscriber breaches the agreement. The built-in credential was
-issued for a domain dedicated to the project and revoked before publication, so no valid
-certificate is involved and a revocation can affect nothing. If you issue your own, use a
-domain name dedicated to the receiver for the same reason. The firmware does not check
-revocation (confirmed on a real controller: a certificate revoked at Google Trust Services
-with reason keyCompromise was accepted exactly as before, through boot, autolink, input and
-rumble, and the controller fetched no CRL and sent no OCSP request), nor the hostname, nor the
-validity dates.
+Copy `fullchain.pem` (the full chain: the intermediate matters) and `privkey.pem`
+(`chmod 600`) to `certs/`; both are ignored by git.
 
 ## Running
 
