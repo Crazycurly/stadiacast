@@ -19,6 +19,7 @@ import pytest
 from stadiacast import capture, loopback
 from stadiacast.audio import SAMPLES_PER_FRAME, AudioSender, Source, ffmpeg_path, source_from_spec
 from stadiacast.capture import BLOCK, QUEUE_BLOCKS, BlockCapture
+from stadiacast.errors import SetupError
 from stadiacast.rtc.rtp import parse_rtp
 from tests.helpers import connect_firmware_flow, make_receiver, single, wait_for
 
@@ -141,6 +142,20 @@ def test_ffmpeg_tone_comes_out_of_the_encoder(tmp_path) -> None:
     asyncio.run(run())
 
 
+def test_a_missing_ffmpeg_is_a_setup_error(monkeypatch) -> None:
+    from stadiacast import audio
+
+    monkeypatch.setattr(audio, "ffmpeg_path", lambda: None)
+
+    async def run() -> None:
+        sender = AudioSender(_StubEndpoint(), srtp=False)
+        with pytest.raises(SetupError, match="ffmpeg not found"):
+            await sender.start(Source.test_tone())
+        assert not sender.playing
+
+    asyncio.run(run())
+
+
 # ---------------------------------------------------------------- system audio capture
 
 
@@ -256,9 +271,9 @@ def test_system_and_device_spellings_follow_the_platform(monkeypatch) -> None:
     assert mic.open_capture is not None and mic.open_capture().name == "MacBook Pro Microphone"
     assert capture.list_devices() == ["MacBook Pro Microphone", "BlackHole 2ch"]  # inputs only
     monkeypatch.setitem(sys.modules, "sounddevice", _FakeSounddevice(inputs[:2]))
-    with pytest.raises(RuntimeError, match="BlackHole"):
+    with pytest.raises(SetupError, match="BlackHole"):
         source_from_spec("system")
-    with pytest.raises(RuntimeError, match="no capture device matches"):
+    with pytest.raises(SetupError, match="no capture device matches"):
         source_from_spec("device:nothing")
 
     monkeypatch.setattr(sys, "platform", "linux")
@@ -325,7 +340,7 @@ def test_the_windows_loopback_is_found_and_read_without_windows(monkeypatch) -> 
     dev = loopback.describe(None)
     assert (dev.name, dev.rate, dev.channels, dev.index) == ("Speakers [Loopback]", 44100, 2, 1)
     assert loopback.describe("speakers") == dev and loopback.devices() == [dev]
-    with pytest.raises(RuntimeError, match="no loopback device matches 'headphones'"):
+    with pytest.raises(SetupError, match="no loopback device matches 'headphones'"):
         loopback.describe("headphones")
 
     cap = dev.capture()
@@ -351,7 +366,7 @@ def test_the_windows_loopback_is_found_and_read_without_windows(monkeypatch) -> 
     bare = _FakePyAudio(default=False)
     bare.infos = bare.infos[:1]
     monkeypatch.setitem(sys.modules, "pyaudiowpatch", bare)
-    with pytest.raises(RuntimeError, match="no WASAPI loopback device"):
+    with pytest.raises(SetupError, match="no WASAPI loopback device"):
         loopback.describe(None)
 
 
@@ -374,7 +389,7 @@ def test_a_stopped_loopback_hands_over_its_queue_then_ends(monkeypatch) -> None:
 def _loopback_input_present() -> bool:
     try:
         return capture.pick_loopback([d.name for d in capture.portaudio_devices()]) is not None
-    except RuntimeError:
+    except SetupError:
         return False
 
 
@@ -499,13 +514,18 @@ def test_the_audio_endpoint(tmp_path) -> None:
     asyncio.run(run())
 
 
-def test_a_missing_portaudio_library_is_a_clear_error(tmp_path, monkeypatch) -> None:
-    """Linux without libportaudio2: the binding imports but raises OSError; the receiver says what to install."""
+def test_the_capture_modules_say_what_to_install(tmp_path, monkeypatch) -> None:
+    """Linux without libportaudio2: the binding imports but raises OSError; the receiver says what to
+    install. Without the extra (PortAudio or the Windows loopback), it names the extra."""
     (tmp_path / "sounddevice.py").write_text("raise OSError('PortAudio library not found')\n")
     monkeypatch.syspath_prepend(str(tmp_path))
     monkeypatch.delitem(sys.modules, "sounddevice", raising=False)
-    with pytest.raises(RuntimeError, match="libportaudio2"):
+    with pytest.raises(SetupError, match="libportaudio2"):
         capture.portaudio_devices()
     monkeypatch.setitem(sys.modules, "sounddevice", None)  # not installed at all: the extra is named
-    with pytest.raises(RuntimeError, match="audio extra"):
+    with pytest.raises(SetupError, match="audio extra"):
         capture.portaudio_devices()
+    monkeypatch.setitem(sys.modules, "pyaudiowpatch", None)
+    assert not loopback.available()
+    with pytest.raises(SetupError, match="audio extra"):
+        loopback.devices()

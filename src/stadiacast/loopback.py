@@ -17,20 +17,21 @@ from dataclasses import dataclass
 from typing import Any
 
 from stadiacast.capture import BLOCK, BlockCapture, CaptureDevice
+from stadiacast.errors import SetupError
 
 
 def _pyaudio() -> Any:
     try:
         import pyaudiowpatch
     except ImportError as e:
-        raise RuntimeError("system audio on Windows needs the audio extra: pip install 'stadiacast[audio]'") from e
+        raise SetupError("system audio on Windows needs the audio extra: pip install 'stadiacast[audio]'") from e
     return pyaudiowpatch
 
 
 def available() -> bool:
     try:
         _pyaudio()
-    except RuntimeError:
+    except SetupError:
         return False
     return True
 
@@ -75,7 +76,7 @@ def describe(name: str | None = None) -> Device:
         key = name.lower()
         found = [d for d in devices() if key in d.name.lower()]
         if not found:
-            raise RuntimeError(f"no loopback device matches {name!r}; available: {[d.name for d in devices()]}")
+            raise SetupError(f"no loopback device matches {name!r}; available: {[d.name for d in devices()]}")
         return found[0]
     p = pa.PyAudio()
     try:
@@ -83,7 +84,7 @@ def describe(name: str | None = None) -> Device:
     except Exception as e:  # no default output device: take the first loopback there is
         found = devices()
         if not found:
-            raise RuntimeError(f"no WASAPI loopback device (no output device? {e})") from e
+            raise SetupError(f"no WASAPI loopback device (no output device? {e})") from e
         return found[0]
     finally:
         p.terminate()

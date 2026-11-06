@@ -28,6 +28,8 @@ import sys
 from dataclasses import dataclass
 from typing import Any
 
+from stadiacast.errors import SetupError
+
 #: Fragments that mark a virtual input carrying the computer's own output.
 LOOPBACK_HINTS = ("blackhole", "loopback", "soundflower", "virtual", "monitor")
 
@@ -104,9 +106,9 @@ def _sounddevice() -> Any:
     try:
         import sounddevice
     except ImportError as e:
-        raise RuntimeError("system audio capture needs the audio extra: pip install 'stadiacast[audio]'") from e
+        raise SetupError("system audio capture needs the audio extra: pip install 'stadiacast[audio]'") from e
     except OSError as e:  # the binding is there but not the library it wraps
-        raise RuntimeError(f"PortAudio is missing ({e}); on Linux install libportaudio2") from e
+        raise SetupError(f"PortAudio is missing ({e}); on Linux install libportaudio2") from e
     return sounddevice
 
 
@@ -178,11 +180,11 @@ def linux_default_monitor() -> str:
     """The PulseAudio monitor of the default sink: what the computer plays."""
     exe = shutil.which("pactl")
     if exe is None:
-        raise RuntimeError("pactl not found: name a capture device with device:NAME (see --audio-devices)")
+        raise SetupError("pactl not found: name a capture device with device:NAME (see --audio-devices)")
     run = subprocess.run([exe, "get-default-sink"], capture_output=True, text=True, timeout=10, check=False)
     sink = run.stdout.strip()
     if run.returncode or not sink:
-        raise RuntimeError("pactl found no default sink: name a capture device with device:NAME")
+        raise SetupError("pactl found no default sink: name a capture device with device:NAME")
     return f"{sink}.monitor"
 
 
@@ -198,7 +200,7 @@ def open_portaudio(name: str | None) -> PortAudioDevice:
         else:
             name = pick_loopback(names)
             if name is None:
-                raise RuntimeError(
+                raise SetupError(
                     f"no loopback device among the audio inputs ({', '.join(names) or 'none'}): install BlackHole "
                     "(brew install blackhole-2ch) and choose it as the sound output, or name an input with device:NAME"
                 )
@@ -207,7 +209,7 @@ def open_portaudio(name: str | None) -> PortAudioDevice:
         (d for d in devices if key in d.name.lower()), None
     )
     if match is None:
-        raise RuntimeError(f"no capture device matches {name!r}; available: {names}")
+        raise SetupError(f"no capture device matches {name!r}; available: {names}")
     return match
 
 

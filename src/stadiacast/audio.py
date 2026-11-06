@@ -48,6 +48,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from stadiacast import capture
+from stadiacast.errors import SetupError
 from stadiacast.rtc.rtp import build_rtp, parse_rtp
 
 #: Samples per Opus frame at 48 kHz: one 20 ms frame. RTP timestamps step by this.
@@ -280,15 +281,16 @@ class AudioSender:
         that is what the tests use, and what any caller with its own encoder would do.
         """
         await self.stop()
+        # Looked up before anything starts, so a missing ffmpeg leaves nothing half set up.
+        exe = ffmpeg_path() if source is not None else None
+        if source is not None and exe is None:
+            raise SetupError("ffmpeg not found on PATH (a build with libopus is required)")
         self.stats = AudioStats(started_at=time.time())
         self._q.clear()
         self._last_send_at = 0.0
         self.source = source
         self._timer_raised = _set_timer_resolution(True)
-        if source is not None:
-            exe = ffmpeg_path()
-            if exe is None:
-                raise RuntimeError("ffmpeg not found on PATH (a build with libopus is required)")
+        if source is not None and exe is not None:
             loop = asyncio.get_running_loop()
             transport, _ = await loop.create_datagram_endpoint(lambda: _LocalRtp(self), local_addr=("127.0.0.1", 0))
             self._transport = transport
@@ -615,7 +617,9 @@ def source_from_spec(spec: str) -> Source:
 
     ``tone`` (a 440 Hz sine), ``file:PATH``, ``system`` (what this computer plays) or
     ``device:NAME`` (one capture device, see ``--audio-devices``). A bad spelling is a
-    ``ValueError``; a capture that cannot be set up on this machine is a ``RuntimeError``.
+    ``ValueError``; a capture that cannot be set up on this machine is a
+    :class:`~stadiacast.errors.SetupError`. Resolving a capture device enumerates the sound
+    cards (and runs ``pactl`` on Linux), so an event loop calls this from a worker thread.
     """
     if spec == "tone":
         return Source.test_tone()
