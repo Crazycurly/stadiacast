@@ -45,10 +45,10 @@ class _FakePad:
         self.closed = True
 
 
-def _with_fake_pads(rx):
+def _with_fake_pads(rx, factory=_FakePad):
     _FakePad.created.clear()
     rx.cfg.gamepad_deadzone = True
-    rx.gamepads = VirtualGamepads(rx.cfg, rx.log, rx, _FakePad)
+    rx.gamepads = VirtualGamepads(rx.cfg, rx.log, rx, factory)
     return rx
 
 
@@ -142,6 +142,49 @@ def test_input_on_the_game_session_reaches_the_pad(tmp_path) -> None:
             assert pad.applied[-1]["wButtons"] == 0 and pad.applied[-1]["bLeftTrigger"] == 0
             assert rx.log.counts.get("game_input_undecodable", 0) == 0
             assert rx.status()["gamepads"] == {"c0": {"slot": 0, "frames": 2, "rumbles": 0}}
+        finally:
+            fc.close()
+            await rx.stop()
+
+    asyncio.run(run())
+
+
+def test_a_failed_pad_shows_its_error_and_is_retried_after_a_reboot(tmp_path) -> None:
+    """A pad ViGEm refuses stays refused for that boot (not retried on every report) and says why in
+    ``/_status``; the controller's reboot forgets the failure, and its next report gets a pad."""
+    attempts: list[str] = []
+
+    def refused_once(label: str) -> _FakePad:
+        attempts.append(label)
+        if len(attempts) == 1:
+            raise RuntimeError("Error: VIGEM_ERROR_TARGET_NOT_PLUGGED_IN")
+        return _FakePad(label)
+
+    async def run() -> None:
+        rx = _with_fake_pads(make_receiver(tmp_path), refused_once)
+        await rx.start()
+        fc = await connect_firmware_flow(rx)
+        try:
+            await asyncio.wait_for(fc.display_ready.wait(), 5)
+            await fc.keepalive()
+            assert fc.send_input_rpc(buttons=1 << 12)
+            await wait_for(lambda: rx.log.counts.get("gamepad_failed"))
+            error = "RuntimeError('Error: VIGEM_ERROR_TARGET_NOT_PLUGGED_IN')"
+            assert rx.status()["gamepads"] == {"c0": {"error": error}}
+            assert fc.send_input_rpc(buttons=0)
+            await wait_for(lambda: single(rx).session["display"]["input_rpc"] == 2)
+            assert attempts == ["c0"] and rx.status()["gamepads"] == {"c0": {"error": error}}
+
+            fc.close()
+            fc = await connect_firmware_flow(rx)  # the controller boots again
+            await asyncio.wait_for(fc.display_ready.wait(), 5)
+            await fc.keepalive()
+            assert rx.status()["gamepads"] == {}
+            assert fc.send_input_rpc(buttons=1 << 13)
+            await wait_for(lambda: _FakePad.created and _FakePad.created[0].applied)
+            assert attempts == ["c0", "c0"] and _FakePad.created[0].applied[-1]["wButtons"] == 1 << 13
+            assert rx.status()["gamepads"] == {"c0": {"slot": 0, "frames": 1, "rumbles": 0}}
+            assert rx.log.counts["gamepad_failed"] == 1 and rx.log.counts["gamepad_created"] == 1
         finally:
             fc.close()
             await rx.stop()

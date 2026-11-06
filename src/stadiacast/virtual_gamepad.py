@@ -6,7 +6,8 @@ forwards the game's rumble back to the controller through the game session, whic
 switches on once the link is READY (rumble has no other path). The reports come from the
 display link and, once a game runs, from the game session; both read into the same
 :class:`~stadiacast.gamepad.GamepadState`. Two controllers are XInput players 1 and 2, each fed
-only by its own reports.
+only by its own reports. A pad that cannot be created shows its error in ``/_status`` and is
+tried again on the controller's next report after it reboots.
 
 :class:`PadBackend` is the small surface the receiver drives, so the tests run the same code
 against a fake pad on every platform.
@@ -212,7 +213,7 @@ class VirtualGamepads:
         self._pending: dict[str, GamepadState] = {}
         self._frames: dict[str, int] = {}
         self._rumbles: dict[str, int] = {}
-        self._failed: set[str] = set()
+        self._failed: dict[str, str] = {}  # label -> why its pad could not be created, until release()
         self._dz = (XINPUT_LEFT_DEADZONE, XINPUT_RIGHT_DEADZONE) if cfg.gamepad_deadzone else (0, 0)
 
     @classmethod
@@ -257,8 +258,8 @@ class VirtualGamepads:
     async def _create(self, label: str) -> None:
         try:
             pad = await asyncio.to_thread(self._factory, label)
-        except Exception as e:  # the driver is missing, or ViGEm refused: this controller has no pad
-            self._failed.add(label)
+        except Exception as e:  # ViGEm refused, or Windows never plugged the pad in: no pad until release()
+            self._failed[label] = repr(e)
             self.log("gamepad_failed", controller=label, error=repr(e))
             return
         finally:
@@ -295,11 +296,16 @@ class VirtualGamepads:
 
     # ---- lifecycle -------------------------------------------------------------------
     def release(self, label: str) -> None:
-        """Let go of every button and stick: the controller rebooted or went away."""
+        """Let go of every button and stick: the controller rebooted or went away.
+
+        A pad that could not be created is forgotten too, so the controller's next report tries
+        again: rebooting the controller is how a user retries a pad ViGEm refused.
+        """
         pad = self._pads.get(label)
         if pad is not None:
             pad.reset()
         self._pending.pop(label, None)
+        self._failed.pop(label, None)
 
     def close(self) -> None:
         for task in self._creating.values():
@@ -313,10 +319,13 @@ class VirtualGamepads:
         self._pads.clear()
 
     def status(self) -> dict[str, Any]:
-        return {
+        """Per label: the pad's XInput ``slot`` and its counters, or the ``error`` its creation ended in."""
+        out: dict[str, Any] = {
             label: {"slot": pad.slot, "frames": self._frames.get(label, 0), "rumbles": self._rumbles.get(label, 0)}
             for label, pad in self._pads.items()
         }
+        out.update({label: {"error": error} for label, error in self._failed.items()})
+        return out
 
 
 __all__ = ["BUTTON_BITS", "MOTOR_SCALE", "PadBackend", "ViGEmPad", "VirtualGamepads", "occupied_xinput_slots"]
