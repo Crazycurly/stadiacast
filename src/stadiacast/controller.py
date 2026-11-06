@@ -365,17 +365,22 @@ class ControllerSession:
         self._audio_task = asyncio.get_running_loop().create_task(self._audio_autostart(self.cfg.audio_source))
 
     async def _audio_autostart(self, spec: str) -> None:
+        """Resolve ``--audio-source`` and start it.  Nothing here raises: this task has no caller to
+        report to, so every failure is a log record and the display link carries on without audio."""
         try:
             source = await self._resolve_source(spec)
-        except (SetupError, ValueError) as e:
+        except (SetupError, ValueError) as e:  # a bad spelling, a capture this computer cannot open
             self.log("audio_source_invalid", spec=spec, error=str(e))
+            return
+        except Exception as e:
+            self.log("audio_start_failed", spec=spec, error=repr(e))
             return
         if self._audio is not None and self._audio.playing:
             return  # /_audio started a stream while the source was being resolved
         try:
             await self.audio_start(source)
-        except Exception as e:  # no ffmpeg, a sound card that refused the source: log it, never take the link down
-            self.log("audio_start_failed", error=repr(e))
+        except Exception as e:  # no ffmpeg, a sound card that refused the source
+            self.log("audio_start_failed", spec=spec, error=repr(e))
 
     def _stop_audio(self) -> None:
         if self._audio_task is not None:

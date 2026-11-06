@@ -127,6 +127,27 @@ def test_sources_resolve_off_the_event_loop_and_a_setup_error_is_reported(tmp_pa
     asyncio.run(run())
 
 
+def test_any_other_failure_of_the_autostart_is_logged_and_the_link_stays_up(tmp_path, sources) -> None:
+    sources.fail["device:Nope"] = RuntimeError("no capture device matches 'Nope'")
+
+    async def run() -> None:
+        rx = make_receiver(tmp_path, audio_source="device:Nope")
+        await rx.start()
+        fc = await connect_firmware_flow(rx)
+        try:
+            await asyncio.wait_for(fc.display_ready.wait(), 5)
+            await fc.keepalive()
+            await wait_for(lambda: rx.log.counts.get("audio_start_failed") == 1)
+            rec = [r for r in rx.log.records if r["event"] == "audio_start_failed"][-1]
+            assert rec["spec"] == "device:Nope" and "no capture device matches" in rec["error"]
+            assert (await fc.keepalive())["kind"] == "response"  # the display link still answers
+        finally:
+            fc.close()
+            await rx.stop()
+
+    asyncio.run(run())
+
+
 @pytest.mark.usefixtures("sources")
 def test_get_reads_the_stream_and_only_post_changes_it(tmp_path) -> None:
     async def run() -> None:
