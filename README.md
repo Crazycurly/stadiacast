@@ -60,24 +60,28 @@ together.
   flashed back to the Wi-Fi firmware with the community's flashing tools. Stadiacast itself
   never flashes anything.
 - Python 3.11 or newer.
-- A macOS or Linux host on the controller's network. The reference rig is a macOS Internet
-  Sharing hotspot (macOS lets an unprivileged process bind ports 53, 80, 123 and 443; on Linux
-  you need root or `CAP_NET_BIND_SERVICE`).
+- A Windows, macOS or Linux host on the controller's network. The reference rig is a macOS
+  Internet Sharing hotspot. macOS and Windows let an unprivileged process bind ports 53, 80, 123
+  and 443; on Linux you need root or `CAP_NET_BIND_SERVICE`. On Windows the firewall may have to
+  let the controller in ([docs/setup.md](docs/setup.md#network)).
 - No certificate to obtain: the receiver ships a chain issued by Google Trust Services that
   the controller accepts, and it never needs renewing because the firmware does not check the
   validity dates. Serving your own is optional; see [docs/setup.md](docs/setup.md#certificate).
 - Optional: `tcpdump` for packet captures, the `ble` extra for first-time Wi-Fi provisioning
-  over Bluetooth, the `passthrough` extra to proxy the `stadiaconfig` request to Google.
+  over Bluetooth, the `passthrough` extra to proxy the `stadiaconfig` request to Google,
+  ffmpeg and the `audio` extra for [headset audio](#headset-audio), the `gamepad` extra and the
+  ViGEmBus driver for the [virtual gamepad](#virtual-gamepad-windows) on Windows.
 
 ## Install
 
 **Ready-made executables.** Every [release](https://github.com/jkfran/stadiacast/releases)
 carries an archive per platform, Windows x86_64, macOS (Apple silicon) and Linux x86_64, with
 `stadiacast` and `stadiacast-provision` as single files that bundle Python, the receiver and its
-extras; only ffmpeg stays separate, for the audio sources. Unpack it and run `stadiacast` from a
-terminal with the same flags as below. The builds are not signed: macOS asks you to allow the
-program once (right-click, Open, or `xattr -d com.apple.quarantine stadiacast`), Windows
-SmartScreen may warn. Ports 53 and 443 need administrator or root rights on every platform.
+extras; only ffmpeg, for the audio sources, and the ViGEmBus driver, for the virtual gamepad,
+stay separate. Unpack it and run `stadiacast` from a terminal with the same flags as below. The
+builds are not signed: macOS asks you to allow the program once (right-click, Open, or
+`xattr -d com.apple.quarantine stadiacast`), Windows SmartScreen may warn. On Linux, ports 53
+and 443 need root or `CAP_NET_BIND_SERVICE` (see [Requirements](#requirements)).
 
 **From the source**, for development or any other platform:
 
@@ -91,7 +95,7 @@ Without [uv](https://docs.astral.sh/uv/):
 
 ```sh
 python3 -m venv .venv && . .venv/bin/activate
-pip install -e ".[ble,passthrough]" --group dev
+pip install -e ".[ble,passthrough,audio,gamepad]" --group dev
 ```
 
 This installs three commands: `stadiacast`, `stadiacast-show-input` and
