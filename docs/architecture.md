@@ -57,7 +57,9 @@ what `/_status` publishes; the `display` sub-dict is reset on every new boot. Wi
 `--audio-source` it also owns an `AudioSender` (`audio.py`): started once the display link is
 READY, it paces Opus frames onto the display link's media pair under the stream's own SSRC. The
 session keeps the stream's gain and libopus application across starts, since a sender only
-lives while it plays.
+lives while it plays. ffmpeg is only the convenient encoder: a front end with its own capture
+and encoder starts the pacer alone with `audio_start(None)` and hands it Opus frames through
+`audio_feed()`.
 
 **`AudioSender`** runs ffmpeg as its encoder and starts it again when it exits. For `system` and
 `device:NAME` it also runs a `BlockCapture` (`capture.py`): a `CaptureDevice` says which PCM

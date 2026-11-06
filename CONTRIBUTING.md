@@ -43,6 +43,15 @@ input on both channels, the game session, rumble and the haptics watchdog.
   compile byte for byte to the committed `.descriptor` files, and every `.proto` rendering
   must list exactly the descriptor's fields.
 
+The fake also runs by hand against a receiver started in lab mode, on loopback with a
+self-signed certificate and high ports:
+
+```sh
+uv run stadiacast --self-signed --https-port 8443 --http-ports 8080 --udp-port 40000 \
+    --game-udp-port 40001 --bind 127.0.0.1 --advertise-ip 127.0.0.1 --start-game
+uv run python tests/fake_controller.py --host 127.0.0.1 --https-port 8443 --game 20
+```
+
 ## Testing against a real controller
 
 The tests prove the receiver matches *our model* of the firmware; only a real controller
@@ -112,3 +121,5 @@ through [SECURITY.md](SECURITY.md), not the public tracker.
    the release on GitHub first works too; the files are then attached to it.
 4. `make exe` builds the executables for the current platform into `dist/`, for a check before
    tagging; `gh workflow run release.yml` builds all three as workflow artifacts without a tag.
+   On Windows, set `VGAMEPAD_SKIP_VIGEMBUS_INSTALL=true` first: installing the `gamepad` extra
+   otherwise launches the ViGEmBus driver's installer on the build machine.

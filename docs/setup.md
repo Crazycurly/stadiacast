@@ -157,6 +157,12 @@ battery level, headset and headset stream (`playback`), and with `--gamepad` eve
 under `gamepads`, with its XInput `slot` or the `error` its creation ended in. `-v` echoes the
 bulky log fields (request bodies, decoded protobufs) to the console too.
 
+`/_audio` controls the headset stream while the receiver runs: `GET` shows it, and a `POST`
+names an action, `{"do": "start", "source": "system"}` (optionally with `volume` and
+`application`), `{"do": "stop"}`, `{"do": "volume", "volume": 0.5}` or
+`{"do": "mode", "mode": 2}`. With several controllers, `controller` names the target, as
+for `/_rumble`.
+
 ### Waking the controller
 
 Press the Stadia button for about one second and release at the first vibration. A full boot

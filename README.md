@@ -52,98 +52,73 @@ account, and nothing leaves your LAN.
 4. **Game session.** On `StartGame` the controller opens a second session for game streaming.
    That session carries input too, and it is the only path to the controller's rumble motors.
 
-[docs/protocol.md](docs/protocol.md) describes the protocol in detail, and what is confirmed
-versus assumed; [docs/architecture.md](docs/architecture.md) explains how the code is put
-together.
+[docs/protocol.md](docs/protocol.md) describes the protocol in detail and
+[docs/architecture.md](docs/architecture.md) how the code is put together.
 
 ## Requirements
 
-- A Stadia Controller running its Wi-Fi firmware (tested with `ota.282115`, the last Wi-Fi
-  build). Google's post-shutdown Bluetooth firmware replaces Wi-Fi mode, but the images are
-  Google-signed and the controller accepts older ones, so a controller in Bluetooth mode can be
-  flashed back to the Wi-Fi firmware with the community's flashing tools. Stadiacast itself
-  never flashes anything.
-- Python 3.11 or newer.
-- A Windows, macOS or Linux host on the controller's network. The reference rig is a macOS
-  Internet Sharing hotspot. macOS and Windows let an unprivileged process bind ports 53, 80, 123
-  and 443; on Linux you need root or `CAP_NET_BIND_SERVICE`. On Windows the firewall may have to
-  let the controller in ([docs/setup.md](docs/setup.md#network)).
-- No certificate to obtain: the receiver ships a chain issued by Google Trust Services that
-  the controller accepts, and it never needs renewing because the firmware does not check the
-  validity dates. Serving your own is optional; see [docs/setup.md](docs/setup.md#certificate).
-- Optional: `tcpdump` for packet captures, the `ble` extra for first-time Wi-Fi provisioning
-  over Bluetooth, the `passthrough` extra to proxy the `stadiaconfig` request to Google,
-  ffmpeg and the `audio` extra for [headset audio](#headset-audio), the `gamepad` extra and the
-  ViGEmBus driver for the [virtual gamepad](#virtual-gamepad-windows) on Windows.
+- A Stadia Controller on its Wi-Fi firmware (tested with `ota.282115`, the last Wi-Fi build).
+  A controller switched to Bluetooth mode accepts older Google-signed images, so the
+  community's flashing tools put the Wi-Fi firmware back. Stadiacast itself never flashes
+  anything.
+- A Windows, macOS or Linux computer on the controller's network, acting as its DNS server.
+  The reference rig is a macOS Internet Sharing hotspot. On Linux, binding ports 53, 80, 123
+  and 443 needs root or `CAP_NET_BIND_SERVICE`; on Windows the firewall may have to let the
+  controller in ([docs/setup.md](docs/setup.md#network)).
+- Nothing else for the basics: the receiver ships a certificate the controller accepts
+  ([serving your own](docs/setup.md#certificate) is optional), and Python 3.11 or newer is
+  only needed to install from source.
+- Optional: ffmpeg for [headset audio](#headset-audio), the ViGEmBus driver for the
+  [virtual gamepad](#virtual-gamepad-windows) on Windows, `tcpdump` for packet captures.
 
 ## Install
 
-**Ready-made executables.** Every [release](https://github.com/jkfran/stadiacast/releases)
-carries an archive per platform, Windows x86_64, macOS (Apple silicon) and Linux x86_64, with
-`stadiacast` and `stadiacast-provision` as single files that bundle Python, the receiver and its
-extras; only ffmpeg, for the audio sources, and the ViGEmBus driver, for the virtual gamepad,
-stay separate. Unpack it and run `stadiacast` from a terminal with the same flags as below. The
-builds are not signed: macOS asks you to allow the program once (right-click, Open, or
-`xattr -d com.apple.quarantine stadiacast`), Windows SmartScreen may warn. On Linux, ports 53
-and 443 need root or `CAP_NET_BIND_SERVICE` (see [Requirements](#requirements)).
+**Executables.** Every [release](https://github.com/jkfran/stadiacast/releases) carries an
+archive for Windows x86_64, macOS (Apple silicon) and Linux x86_64, with `stadiacast` and
+`stadiacast-provision` as single files, Python included. Unpack it and run `stadiacast` from a
+terminal. The builds are not signed: macOS asks you to allow the program once (right-click,
+Open, or `xattr -d com.apple.quarantine stadiacast`) and Windows SmartScreen may warn.
 
-**From the source**, for development or any other platform:
+**From source**, with [uv](https://docs.astral.sh/uv/):
 
 ```sh
 git clone https://github.com/jkfran/stadiacast.git
 cd stadiacast
-uv sync --all-extras                 # creates .venv with the receiver, its extras and the dev tools
+uv sync --all-extras
 ```
 
-Without [uv](https://docs.astral.sh/uv/):
-
-```sh
-python3 -m venv .venv && . .venv/bin/activate
-pip install -e ".[ble,passthrough,audio,gamepad]" --group dev
-```
-
-This installs three commands: `stadiacast`, `stadiacast-show-input` and
-`stadiacast-provision` (`pip` 25.1 or newer understands `--group`). The shell scripts under
+or with pip, `pip install -e ".[ble,passthrough,audio,gamepad]"`. Either way you get
+`stadiacast`, `stadiacast-provision` and `stadiacast-show-input`, and the scripts under
 `tools/` find the virtualenv on their own.
 
 ## Quick start
 
-1. **Network.** Put the controller and the receiver on one network where the receiver is the
-   controller's DNS server. The simplest way is a hotspot hosted by the receiver's machine
+1. **Network.** Put the controller and the receiver on one network where the receiver's
+   machine is the controller's DNS server; a hotspot hosted by that machine is the simplest
    ([docs/setup.md](docs/setup.md#network)).
-2. **Certificate.** Nothing to do: the receiver ships one. To serve your own instead, pass
-   `--cert`/`--key` or put the pair under `certs/` ([details](docs/setup.md#certificate)).
-3. **First boot only: Wi-Fi provisioning.** A controller fresh out of the box, or one that was
-   reset, waits in Bluetooth setup mode for its Wi-Fi credentials:
+2. **First boot only.** A controller fresh out of the box, or one that was reset, waits in
+   Bluetooth setup mode for its Wi-Fi credentials:
 
    ```sh
    stadiacast-provision scan
    stadiacast-provision provision --address <ADDR> --ssid <your SSID>
    ```
 
-4. **Start the receiver** with the configuration proven against the real controller. The
-   script writes a fresh run directory `captures/<stamp>/` with the event log and, when
-   `/dev/bpf*` is readable, a packet capture:
-
-   ```sh
-   tools/start_receiver.sh                 # see .env.example for the rig settings
-   ```
-
-   Or directly:
+3. **Start the receiver.** `tools/start_receiver.sh` runs it with the proven settings (see
+   `.env.example`) and writes a run directory under `captures/`; or directly:
 
    ```sh
    stadiacast --preset live --advertise-ip 192.168.2.1 --dns-upstream 192.168.1.1 -v
    ```
 
-5. **Wake the controller** with a ~1 s press of the Stadia button (release at the first
-   vibration). Two short rumbles and a steady light mean it matched the receiver. Wakes
-   alternate between full boots and short "report wakes" (a blinking light, no rumble): just
-   press again.
-6. **Watch the input.** The console shows one line per report; `stadiacast-show-input
-   captures/<stamp>` summarizes a run. `GET http://<receiver>/_status` shows the session state,
-   the battery level and whether a headset is plugged in.
-7. **Rumble.** Start with `tools/start_receiver.sh --start-game`; the game session comes up
-   about a second after READY:
+4. **Wake the controller** with a ~1 s press of the Stadia button, released at the first
+   vibration. Two short rumbles and a steady light mean it found the receiver; a blinking
+   light with no rumble is a short "report wake", so press again.
+5. **Watch the input.** The console shows one line per report, `stadiacast-show-input
+   captures/<stamp>` summarizes a run, and `GET http://<receiver>/_status` shows the session
+   state, the battery level and whether a headset is plugged in.
+6. **Rumble.** Start with `--start-game`, since the game session is the only path to the
+   motors, then post levels from 0 to 65535:
 
    ```sh
    curl -d '{"left":40000,"right":40000,"ms":1500}' http://192.168.2.1/_rumble   # pulse
@@ -151,23 +126,19 @@ This installs three commands: `stadiacast`, `stadiacast-show-input` and
    curl -d '{"left":0,"right":0}' http://192.168.2.1/_rumble                     # stop
    ```
 
-   Levels are 0 to 65535 per motor. The controller stops its motors 5 s after the last level
-   it received, so the receiver re-sends a held level every 2 s.
-8. **More controllers.** Every controller that connects gets its own session, labelled `c0`,
-   `c1`, ... in the log and in `/_status`. With more than one connected, name the target of a
-   control request: `/_rumble?controller=c1` (or `"controller": "c1"` in the JSON body).
-9. **Stop:** `tools/stop_receiver.sh`.
+7. **More controllers** each get their own session, `c0`, `c1`, ... in the log and in
+   `/_status`; name the target of a control request with `?controller=c1` or a `"controller"`
+   field in the JSON body.
+8. **Stop** with `tools/stop_receiver.sh`.
 
-`--preset live` is the flag set proven end to end; explicit flags override it.
-`stadiacast --help` lists every knob, grouped by protocol phase.
+`--preset live` is the flag set proven end to end; explicit flags override it, and
+`stadiacast --help` lists every knob.
 
 ## Input
 
-In READY the controller reports its state on the display link whenever something changes.
-The receiver decodes it into events with named buttons, stick axes (-32768 to 32767, Y up)
-and triggers (0 to 255). Bits 0 to 15 of the button mask are the XInput `wButtons` layout, so
-`GamepadState.to_xinput()` in `stadiacast.gamepad` converts a report straight into
-`XINPUT_GAMEPAD` fields. The full layout is in
+In READY the controller reports every change on the display link. The receiver decodes it
+into events with named buttons, stick axes (-32768 to 32767, Y up) and triggers (0 to 255),
+with the button bits in the XInput layout. The full report is in
 [docs/protocol.md](docs/protocol.md#input-report-controllertodisplay-3).
 
 ## Headset audio
@@ -178,131 +149,61 @@ encodes every source, so it has to be on `PATH`:
 ```sh
 stadiacast --audio-source tone          # 440 Hz, proves the path without any audio setup
 stadiacast --audio-source file:x.ogg    # anything ffmpeg can decode
-stadiacast --audio-source system        # what this computer plays (see below)
+stadiacast --audio-source system        # what this computer plays
 stadiacast --audio-source device:NAME   # one capture device; --audio-devices lists them
 ```
 
 The stream starts once the display link reaches READY. `--audio-bitrate` sets the Opus bitrate
-(64 kbit/s by default), `--audio-application` what the encoder favours (`lowdelay`, the
-default, for the shortest delay in games, or `audio` for music) and `--audio-volume` the gain
-before encoding. `/_status` reports the stream under `playback`, and `/_audio` controls it
-while the receiver runs: `GET` shows it, and a `POST` names an action, `{"do": "start",
-"source": "system"}` (optionally with `volume` and `application`), `{"do": "stop"}`,
-`{"do": "volume", "volume": 0.5}` or `{"do": "mode", "mode": 2}`.
+(64 kbit/s by default), `--audio-application` favours delay (`lowdelay`, the default) or
+music (`audio`), and `--audio-volume` the gain. `/_status` reports the stream under `playback`
+and `/_audio` starts, stops and adjusts it while the receiver runs
+([docs/setup.md](docs/setup.md#running)).
 
-**`system` and `device:NAME`, captured sound.** Both need the `audio` extra once
-(`pip install 'stadiacast[audio]'`, or `uv sync --extra audio`; Linux also needs the PortAudio
-library, `apt install libportaudio2`). The receiver captures in its own process and pipes the
-PCM to ffmpeg, because ffmpeg's own device inputs drop samples; a device that cannot start
-(busy, or just unplugged) is tried again. On macOS, choose a virtual output such as BlackHole
-(`brew install blackhole-2ch`) as the sound output, or put it in a Multi-Output Device next to
-the speakers; the volume keys do not act on a virtual device, so set loudness in the app that
-plays or with `--audio-volume`. On Windows the default output's WASAPI loopback is captured.
-It carries the mix before the volume slider, so the receiver applies the slider and mute
-itself, which is how the volume and mute keys reach the headset; `--audio-follow-volume off`
-sends the mix as the loopback delivers it. On Linux the default output's PulseAudio monitor is read through
-PortAudio, written from the documentation and not yet tried on a real machine.
-
-**On the wire.** The jack takes a separate media stream on the display link: Opus in RTP
-(PT 111), protected with the SRTP keys the DTLS handshake negotiated, sent on the ICE pair it
-selected. Two things must happen first, and neither is in the SDP: the firmware has to be told
-`SetAudioMode(mode=2, f3=true)` (`DisplayToController` #16), and the media must go on the media
-5-tuple rather than the `0x66` sub-channel that carries input reports: the pad accepts packets
-there and plays nothing. The stream keeps its own SSRC and sequence numbers instead of
-borrowing the endpoint's, which the input ACKs use. ffmpeg is only the convenient encoder: a
-front end with its own capture and encoder starts the pacer alone with
-`ControllerSession.audio_start(None)` and hands it Opus frames through `audio_feed()`. The
-details are in [docs/protocol.md](docs/protocol.md#audio-to-the-headset-jack).
+`system` and `device:NAME` capture sound and need the `audio` extra, which the executables and
+`uv sync --all-extras` include (Linux also needs the PortAudio library, `apt install
+libportaudio2`). On macOS, send the sound to a virtual output such as BlackHole
+(`brew install blackhole-2ch`), alone or in a Multi-Output Device next to the speakers; the
+volume keys do not act on it, so set the loudness in the app or with `--audio-volume`. On
+Windows the default output's loopback is captured and the volume slider and mute reach the
+headset (`--audio-follow-volume off` sends the raw mix). On Linux the default output's
+PulseAudio monitor is read, untested on a real machine. How the stream rides the display link
+is in [docs/protocol.md](docs/protocol.md#audio-to-the-headset-jack).
 
 ## Virtual gamepad (Windows)
 
 `--gamepad vigem` turns each controller into an ordinary Xbox 360 controller for the games on
-the receiver's PC, through the [ViGEmBus](https://github.com/nefarius/ViGEmBus) driver:
+the receiver's PC:
 
 ```sh
-pip install 'stadiacast[gamepad]'       # once; offers to install the ViGEmBus driver when it is missing
 stadiacast --gamepad vigem              # one virtual pad per controller
 ```
 
-Only a driver can create a device that Windows and its games see as a controller, so the pad
-needs one extra install, once and with an admin prompt: ViGEmBus, the same driver behind
+Only a driver can create a device that Windows and its games see as a controller, so this
+needs one extra install, once and with an admin prompt: the
+[ViGEmBus](https://github.com/nefarius/ViGEmBus/releases) driver, the same one behind
 DS4Windows, Sunshine and the other tools of this kind. Its author archived the project in 2023
-and 1.22.0 is the final version; it still installs and works on current Windows 10 and 11.
-The `gamepad` extra is the `vgamepad` package, whose installation runs the ViGEmBus driver's
-installer when the driver is not there yet (set `VGAMEPAD_SKIP_VIGEMBUS_INSTALL=true` to skip
-that, for example on a build machine). The release executables bundle `vgamepad` but not the
-driver, which comes from its [releases page](https://github.com/nefarius/ViGEmBus/releases). It
-needs desktop Windows 10 or 11: a ViGEm pad is a virtual Xbox 360 controller that binds to
-Windows' own driver for it, and Windows Server ships without that driver, so the pad never
-plugs in there and the receiver logs that reason. Without Windows, the extra or the driver, the
-receiver stops at start-up with one line that says what to install.
+and 1.22.0 is the final version; it still installs and works on current Windows 10 and 11. It
+has to be desktop Windows, since Windows Server lacks the Xbox 360 controller driver the pad
+binds to. Without the driver, the receiver stops at start-up with one line that says so; from
+source, installing the `gamepad` extra offers to run the driver's installer.
 
-Every decoded report reaches the pad as XInput fields, from the display link and, once a game
-runs, from the game session, with the standard stick deadzones (`--gamepad-deadzone off` for
-raw sticks); the Stadia button is the guide button, Assistant and Capture have no XInput
-equivalent. The game's rumble comes back: ViGEm reports the motor levels a game sets and the
-receiver forwards them to the controller through the game session, which `--gamepad` switches
-on for that reason. Two controllers are players 1 and 2, each fed only by its own reports;
-`/_status` lists the pads under `gamepads` with the XInput slot each landed on, or with the
-`error` a pad's creation ended in, and the controller's next boot tries that pad again. The
-ViGEm path has not been run on this project's own rig yet; the tests drive the same code
-against a fake pad.
-
-## Repository layout
-
-| path | what |
-|---|---|
-| `src/stadiacast/cli.py` | command line, `main()` |
-| `src/stadiacast/config.py` | `Config` and the `live` preset |
-| `src/stadiacast/receiver.py` | the receiver: HTTP routing, boot-time endpoints, the registry of controller sessions |
-| `src/stadiacast/controller.py` | one controller's session: discovery RPCs, GMsg queue, signaling, display link, input |
-| `src/stadiacast/game_session.py` | the game-streaming session: StartGame, proxied RPCs, input, rumble |
-| `src/stadiacast/audio.py` | headset audio: Opus frames paced onto the display link's media pair (`--audio-source`) |
-| `src/stadiacast/capture.py`, `loopback.py`, `sysvolume.py` | system audio capture: PortAudio and the Windows WASAPI loopback on one block-capture base, the Windows volume |
-| `src/stadiacast/virtual_gamepad.py` | the input as a virtual Xbox 360 pad per controller, rumble back (`--gamepad`, Windows) |
-| `src/stadiacast/http_server.py` | the HTTP/1.1 server shaped for the firmware's client |
-| `src/stadiacast/rtc/` | STUN, DTLS (pyOpenSSL), SRTP, RTP and WireHeader2 framing, one module each; `RtcEndpoint` ties them to a UDP socket |
-| `src/stadiacast/signaling.py` | the protobuf SDP offer / answer / candidate messages |
-| `src/stadiacast/protos.py` | runtime access to the protobuf schemas, the GMsg and RPC envelopes, a schema-less wire dumper |
-| `src/stadiacast/input_protocol.py` | the `InputProtocolMessage` stream decoder (input on the game session) |
-| `src/stadiacast/gamepad.py` | input report layout, button names, XInput conversion |
-| `src/stadiacast/certs.py` | certificate handling (the built-in credential, your own chain, the lab pair, the clock pin) |
-| `src/stadiacast/errors.py` | `SetupError`: what the user has to install or configure, reported as one line |
-| `src/stadiacast/log.py` | the JSON Lines event log |
-| `src/stadiacast/ble_provisioner.py` | BLE Wi-Fi provisioning (`stadiacast-provision`) |
-| `src/stadiacast/show_input.py` | run summary (`stadiacast-show-input`) |
-| `src/stadiacast/helpers/` | the DNS sink and SNTP server the receiver spawns, and their launcher |
-| `src/stadiacast/schemas/` | protobuf schemas: `.descriptor` (runtime) + `.proto` (readable), see its README |
-| `tests/` | unit and end-to-end tests; `fake_controller.py` stands in for the controller |
-| `tools/` | `start_receiver.sh`, `stop_receiver.sh`; `pack_credential.py` builds the built-in credential |
-| `packaging/` | the PyInstaller spec and entry points of the standalone executables (`make exe`) |
-| `docs/` | setup guide, protocol notes, architecture overview |
-| `certs/`, `captures/` | your own certificate (optional) and run directories (both ignored by git) |
+Every report reaches the pad as XInput fields with the standard stick deadzones
+(`--gamepad-deadzone off` for raw sticks); the Stadia button is the guide button, Assistant
+and Capture have no XInput equivalent. The game's rumble comes back to the controller through
+the game session, which `--gamepad` starts for that reason. Two controllers are players 1 and
+2, and `/_status` lists the pads under `gamepads`. The pad has not been run on a real Windows
+PC yet.
 
 ## Development
 
 ```sh
-uv run pytest                                        # the suite drives the whole path against the fake controller
-uv run ruff check . && uv run ruff format --check .  # lint and formatting
-uv run mypy                                          # type check (strict)
-uv run python -m stadiacast.schema_compiler --check   # the .descriptor files match their .proto sources
-make check                                           # all of the above, plus shellcheck on tools/
-make coverage                                        # the suite with a line and branch coverage report
+uv sync --all-extras      # the receiver, its extras and the dev tools
+make check                # ruff, shellcheck, mypy, the schema check and the tests
 ```
 
-No hardware is needed for the tests: `tests/fake_controller.py` reproduces the firmware's
-network behaviour (HTTPS boot, signaling, STUN, DTLS, SRTP, the display RPC state machine,
-the game session and the haptics watchdog). It also runs by hand against a receiver started
-in lab mode:
-
-```sh
-uv run stadiacast --self-signed --https-port 8443 --http-ports 8080 --udp-port 40000 \
-    --game-udp-port 40001 --bind 127.0.0.1 --advertise-ip 127.0.0.1 --start-game
-uv run python tests/fake_controller.py --host 127.0.0.1 --https-port 8443 --game 20
-```
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow, including how to test against a real
-controller safely.
+The tests need no hardware: `tests/fake_controller.py` reproduces the firmware's network
+behaviour. [CONTRIBUTING.md](CONTRIBUTING.md) has the workflow, how to run the fake by hand
+against a receiver in lab mode, and how to test against a real controller safely.
 
 ## Roadmap
 
