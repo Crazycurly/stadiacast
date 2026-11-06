@@ -101,12 +101,11 @@ class Source:
 
     args: list[str]
     label: str
-    #: ``args`` end in ``-i pipe:0``: a capture thread hands PCM to the sender, which writes it to
-    #: ffmpeg's stdin (Windows loopback, which ffmpeg cannot open itself).
+    #: ``args`` end in ``-i pipe:0``: the sender writes the PCM of the capture below to ffmpeg's
+    #: stdin (the ``system`` and ``device:NAME`` sources).
     pcm: bool = False
-    #: Opens that capture: an object with ``start()``, ``stop()``, ``read(timeout)`` and
-    #: ``name``/``rate``/``channels``. One per ffmpeg run, since a thread is not restartable.
-    open_capture: Callable[[], Any] | None = None
+    #: Makes that capture, not yet started. One per ffmpeg run, since a capture does not restart.
+    open_capture: Callable[[], capture.BlockCapture] | None = None
 
     @staticmethod
     def system() -> Source:
@@ -120,15 +119,15 @@ class Source:
         Always a PCM pipe into ffmpeg: WASAPI loopback on Windows (:mod:`stadiacast.loopback`),
         PortAudio elsewhere (:mod:`stadiacast.capture`).
         """
+        dev: capture.CaptureDevice
         if sys.platform == "win32":
             from stadiacast import loopback
 
             dev = loopback.describe(name)
-            args = ["-f", "s16le", "-ar", str(dev.rate), "-ac", str(dev.channels), "-i", "pipe:0"]
-            return Source(args, f"capture {dev.name}", pcm=True, open_capture=lambda: loopback.Capture(dev))
-        dev_name, rate, channels, open_capture = capture.open_portaudio(name)
-        args = ["-f", "s16le", "-ar", str(rate), "-ac", str(channels), "-i", "pipe:0"]
-        return Source(args, f"capture {dev_name}", pcm=True, open_capture=open_capture)
+        else:
+            dev = capture.open_portaudio(name)
+        args = ["-f", "s16le", "-ar", str(dev.rate), "-ac", str(dev.channels), "-i", "pipe:0"]
+        return Source(args, f"capture {dev.name}", pcm=True, open_capture=dev.capture)
 
     @staticmethod
     def test_tone(hz: float = 440.0, duration: float | None = None) -> Source:
@@ -264,7 +263,7 @@ class AudioSender:
         self._task: asyncio.Task[None] | None = None
         self._pacer: asyncio.Task[None] | None = None
         self._feed: asyncio.Task[None] | None = None
-        self._capture: Any = None
+        self._capture: capture.BlockCapture | None = None
         self._sysvol = 1.0
         self._sysvol_at = 0.0
         self._sysvol_warned = False
@@ -448,7 +447,7 @@ class AudioSender:
             with contextlib.suppress(ProcessLookupError):
                 proc.kill()
 
-    # ---- the PCM pipe (Windows loopback) ---------------------------------------
+    # ---- the PCM pipe (system and device captures) -----------------------------
     async def _feed_pcm(self, stdin: asyncio.StreamWriter, source: Source) -> None:
         """Write the capture's PCM blocks to ffmpeg's stdin, scaled by the system volume."""
         try:
@@ -466,8 +465,8 @@ class AudioSender:
             while self._running:
                 chunk = await asyncio.to_thread(cap.read, 0.5)
                 if chunk is None:  # the capture ended (cap.error says why)
-                    self.stats.notes.append(f"capture ended: {getattr(cap, 'error', None)!r}")
-                    self.log("audio_capture_ended", error=getattr(cap, "error", None))
+                    self.stats.notes.append(f"capture ended: {cap.error!r}")
+                    self.log("audio_capture_ended", error=cap.error)
                     return
                 if not chunk:
                     continue

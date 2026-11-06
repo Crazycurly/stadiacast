@@ -1,17 +1,29 @@
-"""Headset audio: the source spellings, the pacer's numbering, and what a fake controller receives."""
+"""Headset audio: the source spellings, the pacer's numbering, the capture plumbing and what a fake
+controller receives."""
 
 from __future__ import annotations
 
 import asyncio
 import json
+import math
+import os
+import struct
 import sys
+import threading
+import time
 import types
+from typing import Any
 
 import pytest
 
+from stadiacast import capture, loopback
 from stadiacast.audio import SAMPLES_PER_FRAME, AudioSender, Source, ffmpeg_path, source_from_spec
+from stadiacast.capture import BLOCK, QUEUE_BLOCKS, BlockCapture
 from stadiacast.rtc.rtp import parse_rtp
 from tests.helpers import connect_firmware_flow, make_receiver, single, wait_for
+
+#: One 20 ms stereo int16 block at 48 kHz, in bytes.
+BLOCK_BYTES = BLOCK * 2 * 2
 
 
 class _StubEndpoint:
@@ -132,36 +144,140 @@ def test_ffmpeg_tone_comes_out_of_the_encoder(tmp_path) -> None:
 # ---------------------------------------------------------------- system audio capture
 
 
-def test_system_and_device_spellings_follow_the_platform(monkeypatch) -> None:
-    from stadiacast import capture, loopback
+class _FakeSounddevice:
+    """Just enough of ``sounddevice``: a device list, and an input stream whose ``start`` hands the
+    given blocks to the capture's callback at once, the way PortAudio's thread does when the reader
+    has stalled."""
 
-    inputs = [("MacBook Pro Microphone", 48000, 1), ("BlackHole 2ch", 48000, 2)]
+    def __init__(self, devices: list[tuple[str, int, int]], blocks: list[bytes] | None = None) -> None:
+        self.devices = devices
+        self.blocks = blocks or []
+        self.streams: list[_FakeInputStream] = []
+
+    def query_devices(self) -> list[dict[str, Any]]:
+        return [{"name": n, "default_samplerate": float(r), "max_input_channels": c} for n, r, c in self.devices]
+
+    def RawInputStream(self, **kwargs: Any) -> _FakeInputStream:  # noqa: N802 (sounddevice's name)
+        stream = _FakeInputStream(self.blocks, **kwargs)
+        self.streams.append(stream)
+        return stream
+
+
+class _FakeInputStream:
+    def __init__(self, blocks: list[bytes], *, callback: Any, **kwargs: Any) -> None:
+        self.blocks, self.callback, self.kwargs = blocks, callback, kwargs
+        self.closed = False
+
+    def start(self) -> None:
+        overrun = types.SimpleNamespace(input_overflow=True)  # PortAudio reports one lost buffer
+        for i, block in enumerate(self.blocks):
+            self.callback(block, BLOCK, None, overrun if i == 0 else None)
+
+    def stop(self) -> None:
+        pass
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _FakePyAudio:
+    """Just enough of ``pyaudiowpatch``: a speaker and its loopback twin. One object plays the module
+    and the PortAudio session; the stream it opens reads the given blocks, then fails like an
+    unplugged device (or keeps repeating the last block when ``endless``)."""
+
+    paInt16 = 8  # noqa: N815 (pyaudiowpatch's name)
+
+    def __init__(self, blocks: list[bytes] | None = None, *, default: bool = True, endless: bool = False) -> None:
+        self.infos: list[dict[str, Any]] = [
+            {"index": 0, "name": "Speakers", "defaultSampleRate": 48000.0, "maxInputChannels": 0},
+            {
+                "index": 1,
+                "name": "Speakers [Loopback]",
+                "defaultSampleRate": 44100.0,
+                "maxInputChannels": 2,
+                "isLoopbackDevice": True,
+            },
+        ]
+        self.blocks = list(blocks or [])
+        self.default, self.endless = default, endless
+        self.opened: list[dict[str, Any]] = []
+        self.closed = False
+
+    def PyAudio(self) -> _FakePyAudio:  # noqa: N802 (pyaudiowpatch's name)
+        return self
+
+    def get_device_count(self) -> int:
+        return len(self.infos)
+
+    def get_device_info_by_index(self, i: int) -> dict[str, Any]:
+        return self.infos[i]
+
+    def get_default_wasapi_loopback(self) -> dict[str, Any]:
+        if not self.default:
+            raise OSError("no default output device")
+        return self.infos[1]
+
+    def open(self, **kwargs: Any) -> _FakePyAudio:
+        self.opened.append(kwargs)
+        return self
+
+    def read(self, _frames: int, exception_on_overflow: bool = True) -> bytes:
+        assert not exception_on_overflow  # an overrun must not end the capture
+        time.sleep(0.001)
+        if self.endless and len(self.blocks) == 1:
+            return self.blocks[0]
+        if not self.blocks:
+            raise OSError("device unplugged")
+        return self.blocks.pop(0)
+
+    def stop_stream(self) -> None:
+        pass
+
+    def close(self) -> None:
+        self.closed = True
+
+    def terminate(self) -> None:
+        pass
+
+
+def _blocks(n: int) -> list[bytes]:
+    return [bytes([i]) * BLOCK_BYTES for i in range(n)]
+
+
+def test_system_and_device_spellings_follow_the_platform(monkeypatch) -> None:
+    inputs = [("Mac mini Speakers", 48000, 0), ("MacBook Pro Microphone", 48000, 1), ("BlackHole 2ch", 48000, 2)]
+    monkeypatch.setitem(sys.modules, "sounddevice", _FakeSounddevice(inputs))
     monkeypatch.setattr(sys, "platform", "darwin")
-    monkeypatch.setattr(capture, "portaudio_devices", lambda: inputs)
     system = source_from_spec("system")
     assert system.args == ["-f", "s16le", "-ar", "48000", "-ac", "2", "-i", "pipe:0"]
     assert system.pcm and system.label == "capture BlackHole 2ch" and system.open_capture is not None
     mic = source_from_spec("device:macbook")  # a fragment, case-insensitive, picks one channel
     assert mic.args == ["-f", "s16le", "-ar", "48000", "-ac", "1", "-i", "pipe:0"]
     assert mic.open_capture is not None and mic.open_capture().name == "MacBook Pro Microphone"
-    monkeypatch.setattr(capture, "portaudio_devices", lambda: inputs[:1])
+    assert capture.list_devices() == ["MacBook Pro Microphone", "BlackHole 2ch"]  # inputs only
+    monkeypatch.setitem(sys.modules, "sounddevice", _FakeSounddevice(inputs[:2]))
     with pytest.raises(RuntimeError, match="BlackHole"):
         source_from_spec("system")
     with pytest.raises(RuntimeError, match="no capture device matches"):
         source_from_spec("device:nothing")
 
     monkeypatch.setattr(sys, "platform", "linux")
-    monkeypatch.setattr(capture, "portaudio_devices", lambda: [("pulse", 44100, 32), ("default", 44100, 32)])
+    monkeypatch.setenv("PULSE_SOURCE", "")  # restored after the test: the source sets it
+    monkeypatch.setitem(sys.modules, "sounddevice", _FakeSounddevice([("pulse", 44100, 32), ("default", 44100, 32)]))
     monkeypatch.setattr(capture, "linux_default_monitor", lambda: "alsa_output.pci.monitor")
     monitor = source_from_spec("system")
     assert monitor.args == ["-f", "s16le", "-ar", "44100", "-ac", "2", "-i", "pipe:0"]
     assert monitor.label == "capture pulse"
+    assert monitor.open_capture is not None and isinstance(monitor.open_capture(), capture.PortAudioCapture)
+    assert os.environ["PULSE_SOURCE"] == "alsa_output.pci.monitor"
 
     monkeypatch.setattr(sys, "platform", "win32")
-    monkeypatch.setattr(loopback, "describe", lambda _name: loopback.Device(3, "Speakers [Loopback]", 44100, 2))
+    monkeypatch.setitem(sys.modules, "pyaudiowpatch", _FakePyAudio())
     win = source_from_spec("system")
     assert win.args == ["-f", "s16le", "-ar", "44100", "-ac", "2", "-i", "pipe:0"]
     assert win.pcm and win.open_capture is not None and win.label == "capture Speakers [Loopback]"
+    assert isinstance(win.open_capture(), loopback.Capture)
+    assert capture.list_devices() == ["Speakers [Loopback]"]
 
     with pytest.raises(ValueError, match="device: needs a name"):
         source_from_spec("device:")
@@ -175,11 +291,89 @@ def test_the_loopback_hints_pick_the_virtual_output() -> None:
     assert pick_loopback(["MacBook Pro Microphone"]) is None
 
 
+def test_a_portaudio_capture_drops_blocks_rather_than_lag(monkeypatch) -> None:
+    blocks = _blocks(QUEUE_BLOCKS + 2)
+    sd = _FakeSounddevice([("BlackHole 2ch", 48000, 2)], blocks)
+    monkeypatch.setitem(sys.modules, "sounddevice", sd)
+    cap = capture.open_portaudio("blackhole 2ch").capture()
+    cap.start()  # the fake delivers every block at once: a reader that stalled
+    (stream,) = sd.streams
+    assert stream.kwargs == {
+        "samplerate": 48000,
+        "blocksize": BLOCK,
+        "channels": 2,
+        "dtype": "int16",
+        "device": "BlackHole 2ch",
+        "latency": "low",
+    }
+    assert cap.overflows == 3  # two blocks found the queue full, and PortAudio reported one overrun
+    assert cap.read(0.1) == blocks[0]  # oldest first: it is the newest that were dropped
+    cap.stop()
+    assert stream.closed
+    assert [cap.read(0.1) for _ in range(QUEUE_BLOCKS - 1)] == blocks[1:QUEUE_BLOCKS]
+    assert cap.read(0.1) is None  # stopped and drained
+    assert cap.error is None
+
+
+def test_the_windows_loopback_is_found_and_read_without_windows(monkeypatch) -> None:
+    """WASAPI loopback on the fake: the default output's loopback in its mix format, its blocks on
+    the shared queue, and an unplugged device ending the capture with the reason."""
+    blocks = _blocks(3)
+    pa = _FakePyAudio(blocks)
+    monkeypatch.setitem(sys.modules, "pyaudiowpatch", pa)
+    assert loopback.available()
+    dev = loopback.describe(None)
+    assert (dev.name, dev.rate, dev.channels, dev.index) == ("Speakers [Loopback]", 44100, 2, 1)
+    assert loopback.describe("speakers") == dev and loopback.devices() == [dev]
+    with pytest.raises(RuntimeError, match="no loopback device matches 'headphones'"):
+        loopback.describe("headphones")
+
+    cap = dev.capture()
+    cap.start()
+    assert [cap.read(1.0) for _ in blocks] == blocks
+    assert cap.read(1.0) is None  # the device went away: the reader is told, and why
+    assert cap.error is not None and "unplugged" in cap.error
+    assert pa.closed
+    assert pa.opened == [
+        {
+            "format": _FakePyAudio.paInt16,
+            "channels": 2,
+            "rate": 44100,
+            "input": True,
+            "input_device_index": 1,
+            "frames_per_buffer": BLOCK,
+        }
+    ]
+
+    # No default output device: the first loopback there is, and with none at all a setup error.
+    monkeypatch.setitem(sys.modules, "pyaudiowpatch", _FakePyAudio(default=False))
+    assert loopback.describe(None) == dev
+    bare = _FakePyAudio(default=False)
+    bare.infos = bare.infos[:1]
+    monkeypatch.setitem(sys.modules, "pyaudiowpatch", bare)
+    with pytest.raises(RuntimeError, match="no WASAPI loopback device"):
+        loopback.describe(None)
+
+
+def test_a_stopped_loopback_hands_over_its_queue_then_ends(monkeypatch) -> None:
+    """Stopping with a full queue: the reader still gets every queued block, then the end."""
+    monkeypatch.setitem(sys.modules, "pyaudiowpatch", _FakePyAudio(_blocks(1), endless=True))
+    cap = loopback.describe(None).capture()
+    cap.start()
+    deadline = time.monotonic() + 5
+    while cap.overflows == 0 and time.monotonic() < deadline:  # nobody reads: the queue fills up
+        time.sleep(0.01)
+    cap.stop()
+    cap._thread.join(timeout=2)  # it closes the stream after the block it is reading
+    queued = []
+    while (block := cap.read(0.2)) is not None:
+        queued.append(block)
+    assert len(queued) == QUEUE_BLOCKS and cap.error is None
+
+
 def _loopback_input_present() -> bool:
     try:
-        from stadiacast import capture
-
-        return capture.pick_loopback([n for n, _r, _c in capture.portaudio_devices()]) is not None
+        return capture.pick_loopback([d.name for d in capture.portaudio_devices()]) is not None
     except RuntimeError:
         return False
 
@@ -215,35 +409,32 @@ def test_volume_becomes_an_ffmpeg_filter() -> None:
     assert sender._scale_pcm(b"\x00\x40", 1.0) == b"\x00\x40"
 
 
-class _SineCapture:
-    """A stand-in for the Windows loopback: 20 ms blocks of a 440 Hz sine, stereo int16 at 48 kHz."""
-
-    name, rate, channels, error = "fake loopback", 48000, 2, None
+class _SineCapture(BlockCapture):
+    """A stand-in for a sound card: a thread pushes 20 ms blocks of a 440 Hz sine, stereo int16 at 48 kHz."""
 
     def __init__(self) -> None:
-        self.n = 0
-        self.stopped = False
+        super().__init__("fake loopback", 48000, 2)
+        self.stopped = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def _run(self) -> None:
+        n = 0
+        while not self.stopped.wait(0.02):  # real time, like a sound card
+            block = [int(12000 * math.sin(2 * math.pi * 440 * i / 48000)) for i in range(n, n + BLOCK)]
+            self._push(struct.pack(f"<{2 * BLOCK}h", *[v for s in block for v in (s, s)]))
+            n += BLOCK
+        self._mark_end()
 
     def start(self) -> None:
-        pass
+        self._thread.start()
 
     def stop(self) -> None:
-        self.stopped = True
-
-    def read(self, _timeout: float = 1.0) -> bytes | None:
-        import math
-        import struct
-        import time as _t
-
-        _t.sleep(0.02)  # real time, like a sound card
-        start, self.n = self.n, self.n + 960
-        block = [int(12000 * math.sin(2 * math.pi * 440 * i / 48000)) for i in range(start, start + 960)]
-        return struct.pack(f"<{2 * 960}h", *[v for s in block for v in (s, s)])
+        self.stopped.set()
 
 
 @pytest.mark.skipif(ffmpeg_path() is None, reason="needs ffmpeg (with libopus) on PATH")
 def test_a_pcm_source_is_piped_into_ffmpeg() -> None:
-    """The Windows loopback path without Windows: PCM blocks on ffmpeg's stdin come out as Opus frames."""
+    """The capture path without a sound card: PCM blocks on ffmpeg's stdin come out as Opus frames."""
 
     async def run() -> None:
         ep = _StubEndpoint()
@@ -260,7 +451,7 @@ def test_a_pcm_source_is_piped_into_ffmpeg() -> None:
             await wait_for(lambda: len(ep.sent) >= 5, timeout=10)
         finally:
             await sender.stop()
-        assert cap.stopped
+        assert cap.stopped.is_set()
         assert sender.stats.level > 0.3  # the sine's peak reached ffmpeg
         assert all(parse_rtp(p).payload for p in ep.sent[:5])
 
@@ -310,8 +501,6 @@ def test_the_audio_endpoint(tmp_path) -> None:
 
 def test_a_missing_portaudio_library_is_a_clear_error(tmp_path, monkeypatch) -> None:
     """Linux without libportaudio2: the binding imports but raises OSError; the receiver says what to install."""
-    from stadiacast import capture
-
     (tmp_path / "sounddevice.py").write_text("raise OSError('PortAudio library not found')\n")
     monkeypatch.syspath_prepend(str(tmp_path))
     monkeypatch.delitem(sys.modules, "sounddevice", raising=False)

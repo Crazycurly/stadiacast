@@ -11,21 +11,12 @@ sometimes 44100), which is why a :class:`Device` carries its rate and channels.
 
 from __future__ import annotations
 
-import queue
+import contextlib
 import threading
 from dataclasses import dataclass
 from typing import Any
 
-#: Frames per block: 20 ms at 48 kHz, one Opus frame.
-BLOCK = 960
-
-
-@dataclass
-class Device:
-    index: int
-    name: str
-    rate: int
-    channels: int
+from stadiacast.capture import BLOCK, BlockCapture, CaptureDevice
 
 
 def _pyaudio() -> Any:
@@ -44,12 +35,22 @@ def available() -> bool:
     return True
 
 
+@dataclass(frozen=True)
+class Device(CaptureDevice):
+    """A loopback device, which PyAudio opens by its index."""
+
+    index: int
+
+    def capture(self) -> Capture:
+        return Capture(self)
+
+
 def _device(info: dict[str, Any]) -> Device:
     return Device(
-        index=int(info["index"]),
         name=str(info["name"]),
         rate=int(info["defaultSampleRate"]),
         channels=max(1, min(2, int(info["maxInputChannels"]))),
+        index=int(info["index"]),
     )
 
 
@@ -88,72 +89,50 @@ def describe(name: str | None = None) -> Device:
         p.terminate()
 
 
-class Capture:
-    """A background thread reads PCM blocks into a queue; the sender takes them.
+class Capture(BlockCapture):
+    """A background thread reads the loopback stream, blocking, and pushes each block."""
 
-    A full queue drops the newest block so the stream stays real time instead of lagging.
-    """
-
-    def __init__(self, device: Device, *, block: int = BLOCK, qsize: int = 24) -> None:
-        self.device = device
-        self.name = device.name
-        self.rate = device.rate
-        self.channels = device.channels
-        self.block = block
-        self.error: str | None = None
-        self.overflows = 0
-        self._q: queue.Queue[bytes | None] = queue.Queue(maxsize=qsize)
+    def __init__(self, device: Device) -> None:
+        super().__init__(device.name, device.rate, device.channels)
+        self._index = device.index
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, name="wasapi-loopback", daemon=True)
 
     def _run(self) -> None:
-        stream = None
-        p = _pyaudio().PyAudio()
+        p: Any = None
+        stream: Any = None
         try:
+            pa = _pyaudio()
+            p = pa.PyAudio()
             stream = p.open(
-                format=_pyaudio().paInt16,
-                channels=self.device.channels,
-                rate=self.device.rate,
+                format=pa.paInt16,
+                channels=self.channels,
+                rate=self.rate,
                 input=True,
-                input_device_index=self.device.index,
-                frames_per_buffer=self.block,
+                input_device_index=self._index,
+                frames_per_buffer=BLOCK,
             )
             while not self._stop.is_set():
-                data = stream.read(self.block, exception_on_overflow=False)
-                try:
-                    self._q.put_nowait(data)
-                except queue.Full:
-                    self.overflows += 1  # the consumer stalled: drop rather than lag
-        except Exception as e:
+                self._push(stream.read(BLOCK, exception_on_overflow=False))
+        except Exception as e:  # an unplugged or reconfigured device ends the capture; the sender restarts it
             self.error = repr(e)
         finally:
+            # A failing close has nothing left to do; the reader is woken either way.
             if stream is not None:
-                try:
+                with contextlib.suppress(Exception):
                     stream.stop_stream()
                     stream.close()
-                except Exception:
-                    pass
-            try:
-                p.terminate()
-            except Exception:
-                pass
-            try:
-                self._q.put_nowait(None)
-            except queue.Full:
-                pass
+            if p is not None:
+                with contextlib.suppress(Exception):
+                    p.terminate()
+            self._mark_end()
 
     def start(self) -> None:
         self._thread.start()
 
     def stop(self) -> None:
+        """Ask the thread to finish: it closes the stream after the block it is reading."""
         self._stop.set()
 
-    def read(self, timeout: float = 1.0) -> bytes | None:
-        """One block of PCM; ``None`` once the capture ended (see ``error``), ``b""`` on a timeout."""
-        try:
-            return self._q.get(timeout=timeout)
-        except queue.Empty:
-            return b""
 
-
-__all__ = ["BLOCK", "Capture", "Device", "available", "describe", "devices"]
+__all__ = ["Capture", "Device", "available", "describe", "devices"]
