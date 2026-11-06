@@ -124,3 +124,31 @@ def test_sources_resolve_off_the_event_loop_and_a_setup_error_is_reported(tmp_pa
             await rx.stop()
 
     asyncio.run(run())
+
+
+@pytest.mark.usefixtures("sources")
+def test_get_reads_the_stream_and_only_post_changes_it(tmp_path) -> None:
+    async def run() -> None:
+        rx = make_receiver(tmp_path)
+        await rx.start()
+        fc = await connect_firmware_flow(rx)
+        cs = single(rx)
+        try:
+            await asyncio.wait_for(fc.display_ready.wait(), 5)
+            await fc.keepalive()
+            st, out = await call(fc, rx, "POST", {"do": "start", "source": "tone"})
+            assert (st, out["playing"]) == (200, True)
+            st, out = await call(fc, rx, "GET", {"do": "stop"})  # an action in a GET body is ignored
+            assert (st, out["playing"], out["controller"]) == (200, True, "c0")
+            for method in ("PUT", "DELETE"):
+                assert await call(fc, rx, method, {"do": "stop"}) == (405, None)
+            assert cs.audio_state()["playing"] is True
+            st, out = await call(fc, rx, "POST")  # a POST has to say what to do
+            assert st == 400 and out["actions"] == ["start", "stop", "volume", "mode"]
+            st, out = await call(fc, rx, "POST", {"do": "stop"})
+            assert (st, out["playing"]) == (200, False)
+        finally:
+            fc.close()
+            await rx.stop()
+
+    asyncio.run(run())

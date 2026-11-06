@@ -441,9 +441,19 @@ class Receiver:
         return picked.game.handle_rumble_request(req)
 
     async def _audio(self, req: HttpRequest) -> HttpResponse:
-        """``/_audio``: the headset stream. GET shows it; POST takes ``{"do": ...}``:
-        ``start`` (``source`` as for ``--audio-source``, optional ``volume``), ``stop``,
-        ``volume`` (``volume``) or ``mode`` (``mode``, the SetAudioModeRequest value)."""
+        """``/_audio``: the headset stream.
+
+        ``GET`` shows it and ignores any body, so a read never changes the stream.  ``POST`` takes
+        ``{"do": ...}``: ``start`` (``source`` as for ``--audio-source``, optional ``volume``),
+        ``stop``, ``volume`` (``volume``) or ``mode`` (``mode``, the SetAudioModeRequest value).
+        """
+        if req.method == "GET":
+            picked = self._pick(req)
+            if isinstance(picked, HttpResponse):
+                return picked
+            return self._json(200, {**picked.audio_state(), "controller": picked.label}, handler="audio")
+        if req.method != "POST":
+            return HttpResponse(405, b"", handler="audio")
         body: dict[str, Any] = {}
         if req.body.strip():
             try:
@@ -454,11 +464,9 @@ class Receiver:
         picked = self._pick(req, body)
         if isinstance(picked, HttpResponse):
             return picked
-        action = str(body.get("do") or "state")
+        action = body.get("do")
         try:
-            if action == "state":
-                out = picked.audio_state()
-            elif action == "start":
+            if action == "start":
                 out = await picked.audio_start_spec(str(body.get("source") or "tone"), volume=body.get("volume"))
             elif action == "stop":
                 out = await picked.audio_stop()
@@ -469,10 +477,12 @@ class Receiver:
             else:
                 return self._json(
                     400,
-                    {"error": f"unknown do={action!r}", "actions": ["state", "start", "stop", "volume", "mode"]},
+                    {"error": f"unknown do={action!r}", "actions": ["start", "stop", "volume", "mode"]},
                     handler="audio",
                 )
         except (KeyError, TypeError, ValueError, RuntimeError) as e:
+            # a missing or malformed field, a bad source spelling, no ffmpeg, or (SetupError) a capture
+            # this computer cannot open: the caller's to fix, so a 400 that says which
             return self._json(400, {"error": str(e)}, handler="audio")
         out["controller"] = picked.label
         return self._json(200, out, handler="audio")
