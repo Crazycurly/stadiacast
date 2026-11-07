@@ -8,6 +8,7 @@ import asyncio
 import ctypes
 import os
 import sys
+from typing import Any
 
 import pytest
 
@@ -88,9 +89,14 @@ def test_a_real_vigem_pad_follows_the_controller_and_reports_the_rumble(tmp_path
 
             vibration = _XInputVibration(65535, 30000)  # what a game does
             assert lib.XInputSetState(pad["slot"], ctypes.byref(vibration)) == 0
-            await wait_for(lambda: rx.log.counts.get("gamepad_rumble", 0) >= 1, timeout=10)
-            record = next(r for r in rx.log.records if r["event"] == "gamepad_rumble")
-            assert record["left"] == 65535 and record["right"] > 0
+
+            # ViGEmBus also reports (0, 0) when the pad plugs in and right before each new level, and
+            # the receiver forwards every report, so the game's level is not the first rumble record.
+            def rumbles() -> list[dict[str, Any]]:
+                return [r for r in rx.log.records if r["event"] == "gamepad_rumble" and r["left"] == 65535]
+
+            await wait_for(rumbles, timeout=10)
+            assert rumbles()[0]["right"] > 0
         finally:
             fc.close()
             await rx.stop()
