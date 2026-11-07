@@ -78,7 +78,8 @@ def build_parser(preset: str | None = None) -> argparse.ArgumentParser:
     g.add_argument(
         "--self-signed",
         action="store_true",
-        help="generate a lab certificate if --cert/--key are missing (tests only: the controller rejects it)",
+        help="generate a lab certificate pair in the run directory (tests only: the controller rejects it); "
+        "with --cert/--key, create the pair there when it is missing",
     )
     g.add_argument(
         "--clock-pin",

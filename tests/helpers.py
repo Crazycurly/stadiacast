@@ -24,6 +24,7 @@ def make_receiver(tmp_path: Path, **overrides: Any) -> Receiver:
     cfg = Config(
         cert=str(tmp_path / "lab.crt"),
         key=str(tmp_path / "lab.key"),
+        cert_given=True,
         self_signed=True,
         bind="127.0.0.1",
         https_port=0,

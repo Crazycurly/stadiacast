@@ -44,7 +44,7 @@ input on both channels, the game session, rumble and the haptics watchdog.
   must list exactly the descriptor's fields.
 
 The fake also runs by hand against a receiver started in lab mode, on loopback with a
-self-signed certificate and high ports:
+self-signed certificate (written into the run directory, never under `certs/`) and high ports:
 
 ```sh
 uv run stadiacast --self-signed --https-port 8443 --http-ports 8080 --udp-port 40000 \

@@ -15,6 +15,9 @@ All notable changes to this project are documented here. The format follows
   the last lines it wrote, instead of passing for running; a helper whose port is taken says
   who usually holds it. On Windows that is the Windows Time service on UDP 123, which has to
   be stopped for the SNTP server to start.
+- `--self-signed` wrote its lab pair to `certs/`, where every later run found it and served it
+  in place of the built-in certificate, which the controller refuses. The lab pair now stays in
+  the run directory unless `--cert`/`--key` name a place for it.
 
 ## [1.0.0] - 2026-11-06
 

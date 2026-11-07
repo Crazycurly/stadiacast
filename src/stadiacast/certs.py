@@ -69,11 +69,16 @@ def resolve_clock_pin(cfg: Config) -> float:
 def ensure_certificate(cfg: Config, log: EventLog) -> None:
     """Make sure ``cfg.cert`` / ``cfg.key`` exist before the HTTPS listener starts.
 
-    Existing files win.  Otherwise ``cfg.self_signed`` creates a lab pair, and a configuration
-    that named no files (``cfg.cert_given`` false) falls back to the built-in credential, which
-    is unpacked into a private temporary directory that ``cfg.cert`` / ``cfg.key`` are pointed
-    at.  Anything else raises :class:`FileNotFoundError`.
+    ``cfg.self_signed`` without named files (``cfg.cert_given`` false) keeps its lab pair in the
+    run directory and points ``cfg.cert`` / ``cfg.key`` at it, so a lab run never leaves a
+    certificate under ``certs/`` for a later live run to serve.  Otherwise existing files win;
+    ``cfg.self_signed`` creates the lab pair at the named paths when they are missing, a
+    configuration that named no files falls back to the built-in credential, which is unpacked
+    into a private temporary directory, and anything else raises :class:`FileNotFoundError`.
     """
+    if cfg.self_signed and not cfg.cert_given:
+        run_dir = cfg.log_dir or "."
+        cfg.cert, cfg.key = os.path.join(run_dir, "self-signed.crt"), os.path.join(run_dir, "self-signed.key")
     if os.path.exists(cfg.cert) and os.path.exists(cfg.key):
         return
     if cfg.self_signed:

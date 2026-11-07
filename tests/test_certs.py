@@ -58,6 +58,19 @@ def test_ensure_certificate_creates_a_lab_pair_only_when_asked(tmp_path):
     assert log.counts == {"self_signed_certificate_created": 1}
 
 
+def test_the_lab_pair_stays_in_the_run_directory_unless_paths_were_named(tmp_path):
+    """A lab run must not leave a pair under certs/ for a later live run to serve."""
+    log = EventLog(None, echo=False)
+    default_cert, default_key = str(tmp_path / "certs" / "fullchain.pem"), str(tmp_path / "certs" / "privkey.pem")
+    cfg = Config(cert=default_cert, key=default_key, self_signed=True, log_dir=str(tmp_path / "run"))
+    ensure_certificate(cfg, log)
+    assert os.path.dirname(cfg.cert) == os.path.dirname(cfg.key) == str(tmp_path / "run")
+    assert os.path.exists(cfg.cert) and os.path.exists(cfg.key) and not os.path.exists(default_cert)
+    assert log.counts == {"self_signed_certificate_created": 1}
+    ensure_certificate(cfg, log)  # the same run directory again: the pair is reused
+    assert log.counts == {"self_signed_certificate_created": 1}
+
+
 def test_clock_pin_dates_and_the_certificate_midpoint(tmp_path):
     cfg = Config(cert=str(tmp_path / "c.pem"), key=str(tmp_path / "k.pem"), self_signed=True)
     cfg.clock_pin = "2026-06-01T12:00:00Z"
