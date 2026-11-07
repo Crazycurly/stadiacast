@@ -1,44 +1,94 @@
-# Stadiacast
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/jkfran/stadiacast/main/docs/images/logo-dark.svg">
+    <img alt="Stadiacast: a local server for the Stadia Controller's Wi-Fi mode" src="https://raw.githubusercontent.com/jkfran/stadiacast/main/docs/images/logo-light.svg" width="560">
+  </picture>
+</p>
 
-[![CI](https://github.com/jkfran/stadiacast/actions/workflows/ci.yml/badge.svg)](https://github.com/jkfran/stadiacast/actions/workflows/ci.yml)
-![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)
-[![PyPI](https://img.shields.io/pypi/v/stadiacast)](https://pypi.org/project/stadiacast/)
-![Status: works end to end](https://img.shields.io/badge/status-works%20end%20to%20end-brightgreen)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+<p align="center">
+  <a href="https://github.com/jkfran/stadiacast/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/jkfran/stadiacast/actions/workflows/ci.yml/badge.svg"></a>
+  <img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&amp;logoColor=white">
+  <a href="https://pypi.org/project/stadiacast/"><img alt="PyPI" src="https://img.shields.io/pypi/v/stadiacast"></a>
+  <img alt="Status: works end to end" src="https://img.shields.io/badge/status-works%20end%20to%20end-brightgreen">
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
+</p>
 
 Google shut Stadia down in January 2023 and, with it, the cloud endpoints the Stadia
 Controller's **Wi-Fi mode** depends on. Stadiacast is a small server you run on your own
 network that stands in for those endpoints, so the controller you own keeps working with your
-own PC: it joins your Wi-Fi, connects, stays on, streams every button, stick and trigger, and
-vibrates on request.
+own PC: it joins your Wi-Fi, connects, stays on, reports every button, stick and trigger,
+vibrates on request and plays sound on its headset jack.
 
-It speaks the controller's stock protocol as is: **no firmware modification**, no Google
-account, and nothing leaves your LAN.
+> **Status:** works end to end on the controller's last Wi-Fi firmware, `ota.282115`, with
+> several controllers at once. Expect rough edges; issues and pull requests are very welcome.
+> Switched your controller to Bluetooth mode? It comes back, see [Requirements](#requirements).
 
-> **Status:** works end to end (input and rumble) on the controller's last Wi-Fi firmware,
-> `ota.282115`, with several controllers at once. Automatic first-boot provisioning and a
-> virtual gamepad on Linux and macOS are on the [roadmap](#roadmap); Windows has one already.
-> Expect rough edges; issues and pull requests are very welcome.
+## Key features
 
-> [!TIP]
-> Switched your controller to Bluetooth mode? It accepts older Google-signed images, so the
-> community's USB flashing tools put the Wi-Fi firmware back ([Requirements](#requirements)).
+- 🛠️ **No firmware modification.** The receiver speaks the controller's stock protocol as is,
+  and never flashes anything.
+- 🔒 **Everything stays on your network.** No Google account, no cloud, nothing leaves your LAN.
+- 📜 **Nothing to obtain.** The receiver ships a certificate the controller accepts: unpack,
+  run, wake the controller.
+- 🎮 **A PC gamepad on Windows.** Every controller becomes an Xbox 360 controller for your
+  games, and the game's rumble reaches the controller.
+- 🎧 **Headset audio.** What the PC plays, or any file, streams to a headset plugged into the
+  controller.
+- 👥 **Several controllers at once**, each one its own player.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/jkfran/stadiacast/main/docs/images/flow-dark.svg">
+    <img alt="The controller talks to Stadiacast over Wi-Fi, and Stadiacast feeds your games as an Xbox 360 pad" src="https://raw.githubusercontent.com/jkfran/stadiacast/main/docs/images/flow-light.svg" width="680">
+  </picture>
+</p>
+
+## Quick start
+
+```sh
+pip install 'stadiacast[audio,gamepad]'              # or unpack an executable from the releases page
+stadiacast --preset live --dns-upstream 192.168.1.1   # your router: the DNS sink forwards the rest there
+```
+
+1. **Network.** Put the controller and the receiver on one network where the receiver's
+   machine is the controller's DNS server; a hotspot hosted by that machine is the simplest
+   ([docs/setup.md](docs/setup.md#network)).
+2. **First boot only.** A controller fresh out of the box, or one that was reset, waits in
+   Bluetooth setup mode for its Wi-Fi credentials:
+
+   ```sh
+   stadiacast-provision scan
+   stadiacast-provision provision --address <ADDR> --ssid <your SSID>
+   ```
+
+3. **Start the receiver** with the command above; on Windows add `--gamepad vigem` for the
+   [virtual gamepad](#virtual-gamepad-windows). From a source checkout,
+   `tools/start_receiver.sh` does the same with the settings in `.env.example` and writes a
+   run directory under `captures/`.
+4. **Wake the controller** with a ~1 s press of the Stadia button, released at the first
+   vibration. Two short rumbles and a steady light mean it found the receiver; a blinking
+   light with no rumble is a short "report wake", so press again.
+5. **Watch the input.** The console shows one line per report, `stadiacast-show-input
+   captures/<stamp>` summarizes a run, and `GET http://<receiver>/_status` shows the session
+   state, the battery level and whether a headset is plugged in.
+6. **Rumble.** Start with `--start-game`, since the game session is the only path to the
+   motors, then post levels from 0 to 65535:
+
+   ```sh
+   curl -d '{"left":40000,"right":40000,"ms":1500}' http://192.168.2.1/_rumble   # pulse
+   curl -d '{"left":65535,"right":20000}' http://192.168.2.1/_rumble              # hold
+   curl -d '{"left":0,"right":0}' http://192.168.2.1/_rumble                     # stop
+   ```
+
+7. **More controllers** each get their own session, `c0`, `c1`, ... in the log and in
+   `/_status`; name the target of a control request with `?controller=c1` or a `"controller"`
+   field in the JSON body.
+8. **Stop** with Ctrl-C, or `tools/stop_receiver.sh` for a receiver the start script launched.
+
+`--preset live` is the flag set proven end to end; explicit flags override it, and
+`stadiacast --help` lists every knob.
 
 ## How it works
-
-```
- Stadia Controller (Wi-Fi)                      your PC / Mac running the receiver
- ─────────────────────────                      ──────────────────────────────────
- DNS  *.googleapis.com ─────────────────────▶   DNS sink: answers with the receiver's IP
- HTTPS boot: generate_204, stadiaconfig,
-       Omaha update check, Clearcut logs ─────▶  boot-time endpoints (GTS certificate)
- HTTPS v1:RegisterController,
-       v1:DiscoverDisplay (WebRTC offer) ─────▶  discovery RPCs, answer queued on GMsg
- HTTPS /gmsg long poll ◀──────────────────────   GMsg push channel: the WebRTC answer
- UDP   STUN + DTLS (display link) ◀──────────▶   RTC endpoint: display RPC handshake → READY
- DTLS  WireHeader2 0x74/0x75 RPCs, input ────▶   decoded input events (JSON Lines log)
- DTLS  second session for game streaming ◀───▶   game session: input + rumble (haptics)
-```
 
 1. **DNS.** The controller must use the receiver's machine as its DNS server. The receiver
    spawns a small DNS server that points the Google names it needs at itself and forwards
@@ -97,49 +147,6 @@ Bluetooth provisioning, `passthrough` proxies the `stadiaconfig` request to Goog
 and `gamepad` are the [headset audio](#headset-audio) capture and the
 [virtual gamepad](#virtual-gamepad-windows). The scripts under `tools/` find the virtualenv on
 their own.
-
-## Quick start
-
-1. **Network.** Put the controller and the receiver on one network where the receiver's
-   machine is the controller's DNS server; a hotspot hosted by that machine is the simplest
-   ([docs/setup.md](docs/setup.md#network)).
-2. **First boot only.** A controller fresh out of the box, or one that was reset, waits in
-   Bluetooth setup mode for its Wi-Fi credentials:
-
-   ```sh
-   stadiacast-provision scan
-   stadiacast-provision provision --address <ADDR> --ssid <your SSID>
-   ```
-
-3. **Start the receiver.** `tools/start_receiver.sh` runs it with the proven settings (see
-   `.env.example`) and writes a run directory under `captures/`; or directly:
-
-   ```sh
-   stadiacast --preset live --advertise-ip 192.168.2.1 --dns-upstream 192.168.1.1 -v
-   ```
-
-4. **Wake the controller** with a ~1 s press of the Stadia button, released at the first
-   vibration. Two short rumbles and a steady light mean it found the receiver; a blinking
-   light with no rumble is a short "report wake", so press again.
-5. **Watch the input.** The console shows one line per report, `stadiacast-show-input
-   captures/<stamp>` summarizes a run, and `GET http://<receiver>/_status` shows the session
-   state, the battery level and whether a headset is plugged in.
-6. **Rumble.** Start with `--start-game`, since the game session is the only path to the
-   motors, then post levels from 0 to 65535:
-
-   ```sh
-   curl -d '{"left":40000,"right":40000,"ms":1500}' http://192.168.2.1/_rumble   # pulse
-   curl -d '{"left":65535,"right":20000}' http://192.168.2.1/_rumble              # hold
-   curl -d '{"left":0,"right":0}' http://192.168.2.1/_rumble                     # stop
-   ```
-
-7. **More controllers** each get their own session, `c0`, `c1`, ... in the log and in
-   `/_status`; name the target of a control request with `?controller=c1` or a `"controller"`
-   field in the JSON body.
-8. **Stop** with `tools/stop_receiver.sh`.
-
-`--preset live` is the flag set proven end to end; explicit flags override it, and
-`stadiacast --help` lists every knob.
 
 ## Input
 
