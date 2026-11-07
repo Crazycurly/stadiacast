@@ -258,20 +258,35 @@ class _FakePyAudio:
     unplugged device (or keeps repeating the last block when ``endless``)."""
 
     paInt16 = 8  # noqa: N815 (pyaudiowpatch's name)
+    paContinue = 0  # noqa: N815 (pyaudiowpatch's name)
 
-    def __init__(self, blocks: list[bytes] | None = None, *, default: bool = True, endless: bool = False) -> None:
+    def __init__(
+        self,
+        blocks: list[bytes] | None = None,
+        *,
+        default: bool = True,
+        endless: bool = False,
+        output_fails: bool = False,
+    ) -> None:
         self.infos: list[dict[str, Any]] = [
-            {"index": 0, "name": "Speakers", "defaultSampleRate": 48000.0, "maxInputChannels": 0},
+            {
+                "index": 0,
+                "name": "Speakers",
+                "defaultSampleRate": 48000.0,
+                "maxInputChannels": 0,
+                "maxOutputChannels": 2,
+            },
             {
                 "index": 1,
                 "name": "Speakers [Loopback]",
                 "defaultSampleRate": 44100.0,
                 "maxInputChannels": 2,
+                "maxOutputChannels": 0,
                 "isLoopbackDevice": True,
             },
         ]
         self.blocks = list(blocks or [])
-        self.default, self.endless = default, endless
+        self.default, self.endless, self.output_fails = default, endless, output_fails
         self.opened: list[dict[str, Any]] = []
         self.closed = False
 
@@ -290,6 +305,8 @@ class _FakePyAudio:
         return self.infos[1]
 
     def open(self, **kwargs: Any) -> _FakePyAudio:
+        if kwargs.get("output") and self.output_fails:
+            raise OSError("the speaker is in exclusive use")
         self.opened.append(kwargs)
         return self
 
@@ -388,8 +405,9 @@ def test_a_portaudio_capture_drops_blocks_rather_than_lag(monkeypatch) -> None:
 
 
 def test_the_windows_loopback_is_found_and_read_without_windows(monkeypatch) -> None:
-    """WASAPI loopback on the fake: the default output's loopback in its mix format, its blocks on
-    the shared queue, and an unplugged device ending the capture with the reason."""
+    """WASAPI loopback on the fake: the default output's loopback in its mix format, silence rendered
+    on its speaker so the loopback keeps delivering, its blocks on the shared queue, and an unplugged
+    device ending the capture with the reason."""
     blocks = _blocks(3)
     pa = _FakePyAudio(blocks)
     monkeypatch.setitem(sys.modules, "pyaudiowpatch", pa)
@@ -402,20 +420,45 @@ def test_the_windows_loopback_is_found_and_read_without_windows(monkeypatch) -> 
 
     cap = dev.capture()
     cap.start()
+    assert cap.details() == {"keepalive": "Speakers"}
     assert [cap.read(1.0) for _ in blocks] == blocks
     assert cap.read(1.0) is None  # the device went away: the reader is told, and why
     assert cap.error is not None and "unplugged" in cap.error
     assert pa.closed
-    assert pa.opened == [
-        {
-            "format": _FakePyAudio.paInt16,
-            "channels": 2,
-            "rate": 44100,
-            "input": True,
-            "input_device_index": 1,
-            "frames_per_buffer": BLOCK,
-        }
-    ]
+    silence, capture = pa.opened
+    render = silence.pop("stream_callback")
+    assert render(None, 480, None, 0) == (bytes(480 * 2 * 2), _FakePyAudio.paContinue)
+    assert silence == {
+        "format": _FakePyAudio.paInt16,
+        "channels": 2,
+        "rate": 48000,
+        "output": True,
+        "output_device_index": 0,
+        "frames_per_buffer": BLOCK,
+    }
+    assert capture == {
+        "format": _FakePyAudio.paInt16,
+        "channels": 2,
+        "rate": 44100,
+        "input": True,
+        "input_device_index": 1,
+        "frames_per_buffer": BLOCK,
+    }
+
+    # The speaker refuses a second stream, or has no device of its own: the capture runs without
+    # the keepalive and says so.
+    busy = _FakePyAudio(_blocks(1), output_fails=True)
+    monkeypatch.setitem(sys.modules, "pyaudiowpatch", busy)
+    cap = loopback.describe(None).capture()
+    cap.start()
+    assert cap.details()["keepalive"] == "failed: OSError('the speaker is in exclusive use')"
+    assert [kw["input"] for kw in busy.opened] == [True]
+    lonely = _FakePyAudio(_blocks(1), default=False)
+    lonely.infos = [dict(lonely.infos[1], index=0)]
+    monkeypatch.setitem(sys.modules, "pyaudiowpatch", lonely)
+    cap = loopback.describe(None).capture()
+    cap.start()
+    assert cap.details()["keepalive"] == "failed: no output device matches the loopback 'Speakers [Loopback]'"
 
     # No default output device: the first loopback there is, and with none at all a setup error.
     monkeypatch.setitem(sys.modules, "pyaudiowpatch", _FakePyAudio(default=False))

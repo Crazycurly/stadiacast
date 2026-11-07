@@ -75,6 +75,10 @@ class BlockCapture(abc.ABC):
         except queue.Empty:
             return None if self._ended else b""
 
+    def details(self) -> dict[str, Any]:
+        """What else the log should say about a started capture (the loopback names its keepalive)."""
+        return {}
+
     def _push(self, block: bytes) -> None:
         try:
             self._q.put_nowait(block)
@@ -133,6 +137,8 @@ class PortAudioCapture(BlockCapture):
         self._push(bytes(indata))
 
     def start(self) -> None:
+        if self._ended:  # stopped before it opened
+            return
         sd = _sounddevice()
         self._stream = sd.RawInputStream(
             samplerate=self.rate,
@@ -146,6 +152,8 @@ class PortAudioCapture(BlockCapture):
             callback=self._callback,
         )
         self._stream.start()
+        if self._ended:  # stopped while it was opening, on another thread
+            self.stop()
 
     def stop(self) -> None:
         stream, self._stream = self._stream, None

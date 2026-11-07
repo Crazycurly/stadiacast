@@ -65,7 +65,9 @@ and encoder starts the pacer alone with `audio_start(None)` and hands it Opus fr
 `device:NAME` it also runs a `BlockCapture` (`capture.py`): a `CaptureDevice` says which PCM
 format its device delivers and makes a fresh capture for every ffmpeg run, and the capture hands
 over 20 ms blocks through a bounded queue. `PortAudioCapture` (macOS, Linux) and the WASAPI
-loopback's `Capture` (`loopback.py`, Windows) only open their device and push blocks. One
+loopback's `Capture` (`loopback.py`, Windows) only open their device and push blocks; the
+loopback also renders silence on its speaker, since WASAPI feeds a loopback only while something
+plays. One
 worker-thread call per block reads it, scales it by the Windows volume (`sysvolume.py`) and
 measures its level, so no per-sample work runs on the event loop, which then writes the block to
 ffmpeg's stdin.

@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- On Windows the headset stream stopped whenever the computer fell silent and resumed with the
+  next sound, because WASAPI feeds a loopback only while something plays: the capture now
+  renders silence on the speaker while it runs, and the stream is continuous as on the other
+  platforms.
+
 ## [1.0.0] - 2026-11-06
 
 Nothing to configure before the first run, sound on the headset, a virtual gamepad on Windows

@@ -466,14 +466,17 @@ class AudioSender:
             cap = source.open_capture() if source.open_capture else None
             if cap is None:
                 raise RuntimeError("the PCM source has no capture to open")
-            cap.start()
+            # Registered before it opens, so a stop during the open (a worker thread: opening a
+            # sound device takes a while) still reaches it.
+            self._capture = cap
+            await asyncio.to_thread(cap.start)
         except Exception as e:
             self.stats.notes.append(f"capture failed: {e!r}")
             self.log("audio_capture_failed", error=repr(e))
+            self._stop_capture()
             stdin.close()
             return
-        self._capture = cap
-        self.log("audio_capture", device=cap.name, rate=cap.rate, channels=cap.channels)
+        self.log("audio_capture", device=cap.name, rate=cap.rate, channels=cap.channels, **cap.details())
         try:
             while self._running:
                 # The gain is read here, on the loop thread: the COM interface sysvolume caches belongs

@@ -128,6 +128,10 @@ def test_the_windows_loopback_reaches_the_controller(tmp_path) -> None:
             await asyncio.wait_for(fc.display_ready.wait(), 5)
             await fc.keepalive()
             await wait_for(lambda: rx.log.counts.get("audio_capture", 0) >= 1, timeout=15)
+            started = next(r for r in rx.log.records if r["event"] == "audio_capture")
+            assert not str(started["keepalive"]).startswith("failed"), started
+            # Nothing plays on this machine: the silence the capture renders on the speaker is what
+            # makes WASAPI hand over loopback data at all, so the frames below are its doing.
             await wait_for(lambda: len(fc.audio_frames) >= 25, timeout=15)  # half a second of Opus
             state = single(rx).audio_state()
             assert state["playing"] and state["source"] == f"capture {device.name}"
