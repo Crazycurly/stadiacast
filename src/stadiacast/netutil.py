@@ -3,11 +3,37 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import ipaddress
 import socket
+import sys
 from urllib.parse import urlsplit
 
 from stadiacast import SERVER_NAME
+
+
+def bind_hint(port: int, protocol: str, error: OSError) -> str:
+    """One sentence for the user on a port that could not be bound: who holds it, and what to do.
+
+    Windows refuses a port another program holds exclusively with a permission error, and the
+    Windows Time service holds UDP 123 that way while it runs; Linux refuses the ports below 1024
+    to anyone but root.
+    """
+    taken = f"{protocol} port {port} is taken"
+    if sys.platform == "win32" and isinstance(error, PermissionError):
+        if port == 123:
+            return (
+                f"{taken}, on Windows normally by the Windows Time service: run Stop-Service w32time in an "
+                f"administrator PowerShell (it starts again at the next boot) and start the receiver again ({error})"
+            )
+        return f"{taken} by another program, which holds it exclusively ({error})"
+    if isinstance(error, PermissionError):
+        return f"binding {protocol} port {port} needs root or CAP_NET_BIND_SERVICE ({error})"
+    if error.errno == errno.EADDRINUSE:
+        if port == 53 and sys.platform.startswith("linux"):
+            return f"{taken} by another program, often systemd-resolved or dnsmasq ({error})"
+        return f"{taken} by another program ({error})"
+    return f"cannot bind {protocol} port {port}: {error}"
 
 
 def local_ip_towards(target: str) -> str | None:

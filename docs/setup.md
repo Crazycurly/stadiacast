@@ -56,6 +56,10 @@ Ports used by the receiver (all configurable):
 On Linux, binding the ports below 1024 needs root, or `CAP_NET_BIND_SERVICE` granted to the
 interpreter binary (`setcap cap_net_bind_service=+ep` on the file `.venv/bin/python3` links to).
 
+On Windows, the Windows Time service holds UDP 123 while it runs, and the SNTP server cannot
+start until it is stopped: `Stop-Service w32time` in an administrator PowerShell (Windows
+starts it again at the next boot).
+
 On Windows, when the controller sits on another subnet than the PC (a dedicated Wi-Fi network
 routed to it), Windows Defender Firewall drops the inbound traffic by default: allow UDP 53,
 TCP 443 and the UDP range of the WebRTC ports (40000 and up, two per controller). A blocked
@@ -187,6 +191,7 @@ Events worth knowing when something does not work:
 | `controller_battery` | the battery gauge moved (`percent`); it steps down one percent at a time |
 | `controller_audio_config` | the headset was plugged in or pulled (`headset`) |
 | `port_busy` | port 80 or 8008 is held by another program; the receiver goes on without it, 443 is the only port the controller needs |
+| `helper_exited` | the DNS sink or the SNTP server (`helper`) ended; `output` holds the last lines it wrote, which name the port another program holds |
 
 ## Wi-Fi provisioning over Bluetooth
 

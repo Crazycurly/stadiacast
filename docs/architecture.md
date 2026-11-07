@@ -19,7 +19,8 @@ that has no interpreter to run `-m` with, the executable itself with `--helper <
 | SNTP server | `stadiacast.helpers.sntp_server` | binds port 123; answers `time.google.com` with the host clock |
 
 The helpers are plain blocking servers in their own processes so they keep answering while the
-receiver's event loop is busy, and so the privileged-looking ports are isolated.
+receiver's event loop is busy, and so the privileged-looking ports are isolated. The receiver
+watches them: one that exits is logged (`helper_exited`) with the last lines it wrote.
 
 ## Objects
 

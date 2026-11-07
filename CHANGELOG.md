@@ -11,6 +11,10 @@ All notable changes to this project are documented here. The format follows
   next sound, because WASAPI feeds a loopback only while something plays: the capture now
   renders silence on the speaker while it runs, and the stream is continuous as on the other
   platforms.
+- A helper process that ends (the DNS sink, the SNTP server) is logged as `helper_exited` with
+  the last lines it wrote, instead of passing for running; a helper whose port is taken says
+  who usually holds it. On Windows that is the Windows Time service on UDP 123, which has to
+  be stopped for the SNTP server to start.
 
 ## [1.0.0] - 2026-11-06
 

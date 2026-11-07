@@ -19,6 +19,7 @@ import time
 from collections.abc import Sequence
 
 from stadiacast.log import EventLog
+from stadiacast.netutil import bind_hint
 
 NTP_EPOCH_OFFSET = 2208988800  # 1900-01-01 -> 1970-01-01
 NTP_PACKET_LEN = 48
@@ -68,7 +69,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     log = EventLog(a.log)
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    s.bind((a.listen, a.port))
+    try:
+        s.bind((a.listen, a.port))
+    except OSError as e:
+        hint = bind_hint(a.port, "UDP", e)
+        log("bind_failed", listen=f"{a.listen}:{a.port}", error=hint)
+        log.close()
+        return 1
     log("start", listen=f"{a.listen}:{a.port}")
     try:
         while True:

@@ -39,7 +39,7 @@ from stadiacast.helpers.dnswire import (
     parse_message,
 )
 from stadiacast.log import EventLog
-from stadiacast.netutil import local_ip_towards
+from stadiacast.netutil import bind_hint, local_ip_towards
 
 DEFAULT_REDIRECTS = ("*.googleapis.com", "googleapis.com")
 
@@ -212,8 +212,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         nxdomain=args.nxdomain,
         upstream_port=args.upstream_port,
     )
-    udp = _UdpServer((args.listen, args.port), _UdpHandler)
-    tcp = _TcpServer((args.listen, args.port), _TcpHandler)
+    try:
+        udp = _UdpServer((args.listen, args.port), _UdpHandler)
+        tcp = _TcpServer((args.listen, args.port), _TcpHandler)
+    except OSError as e:
+        hint = bind_hint(args.port, "DNS", e)
+        log("bind_failed", listen=f"{args.listen}:{args.port}", error=hint)
+        log.close()
+        return 1
     udp.resolver = tcp.resolver = resolver  # type: ignore[attr-defined]
     log(
         "start",

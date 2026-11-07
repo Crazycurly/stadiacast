@@ -44,6 +44,18 @@ MAX_CONTROLLERS = 8
 RPC_PATH = re.compile(r"^/v1:([A-Za-z0-9_]+)$")
 
 
+def _tail(path: str, lines: int = 5) -> list[str]:
+    """The last non-empty lines of a text file: what a helper wrote before it exited."""
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - 4096))
+            text = f.read().decode("utf-8", "replace")
+    except OSError:
+        return []
+    return [line.strip() for line in text.splitlines() if line.strip()][-lines:]
+
+
 class Receiver:
     """The LAN-side stand-in for the Stadia cloud."""
 
@@ -69,6 +81,7 @@ class Receiver:
         self._stats_task: asyncio.Task[None] | None = None
         self._dns_proc: asyncio.subprocess.Process | None = None
         self._sntp_proc: asyncio.subprocess.Process | None = None
+        self._helper_watchers: list[asyncio.Task[None]] = []
         self.started = False
 
     def now(self) -> float:
@@ -138,6 +151,9 @@ class Receiver:
         if self.gamepads is not None:
             self.gamepads.close()
         await self.http.stop()
+        for watcher in self._helper_watchers:  # a helper stopped here is no news
+            watcher.cancel()
+        self._helper_watchers.clear()
         for proc in (self._dns_proc, self._sntp_proc):
             if proc and proc.returncode is None:
                 proc.terminate()
@@ -159,10 +175,20 @@ class Receiver:
         self.log.close()
 
     async def _spawn_helper(self, name: str, args: list[str], out_name: str) -> asyncio.subprocess.Process:
-        """Run a helper process with its output in the run directory (see :mod:`stadiacast.helpers`)."""
+        """Run a helper process with its output in the run directory (see :mod:`stadiacast.helpers`)
+        and watch it: a helper is meant to outlive the receiver, so one that exits is logged, with
+        the last lines it wrote (the port it could not bind, usually)."""
         assert self.cfg.log_dir is not None
-        with open(os.path.join(self.cfg.log_dir, out_name), "ab") as out:
-            return await asyncio.create_subprocess_exec(*helper_command(name, args), stdout=out, stderr=out)
+        out_path = os.path.join(self.cfg.log_dir, out_name)
+        with open(out_path, "ab") as out:
+            proc = await asyncio.create_subprocess_exec(*helper_command(name, args), stdout=out, stderr=out)
+        watcher = asyncio.get_running_loop().create_task(self._watch_helper(name, proc, out_path))
+        self._helper_watchers.append(watcher)
+        return proc
+
+    async def _watch_helper(self, name: str, proc: asyncio.subprocess.Process, out_path: str) -> None:
+        code = await proc.wait()
+        self.log("helper_exited", helper=name, pid=proc.pid, returncode=code, output=_tail(out_path))
 
     async def _start_dns(self) -> None:
         assert self.cfg.log_dir is not None and self.cfg.dns_upstream is not None and self.cfg.advertise_ip is not None
