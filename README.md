@@ -1,8 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/jkfran/stadiacast/main/docs/images/logo-dark.svg">
-    <img alt="Stadiacast: a local server for the Stadia Controller's Wi-Fi mode" src="https://raw.githubusercontent.com/jkfran/stadiacast/main/docs/images/logo-light.svg" width="560">
-  </picture>
+  <img alt="Stadiacast: a local server for the Stadia Controller's Wi-Fi mode" src="https://raw.githubusercontent.com/jkfran/stadiacast/main/docs/images/logo.svg" width="560">
 </p>
 
 <p align="center">
@@ -37,10 +34,7 @@ vibrates on request and plays sound on its headset jack.
 - 👥 **Several controllers at once**, each one its own player.
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/jkfran/stadiacast/main/docs/images/flow-dark.svg">
-    <img alt="The controller talks to Stadiacast over Wi-Fi, and Stadiacast feeds your games as an Xbox 360 pad" src="https://raw.githubusercontent.com/jkfran/stadiacast/main/docs/images/flow-light.svg" width="680">
-  </picture>
+  <img alt="The controller talks to Stadiacast over Wi-Fi, and Stadiacast feeds your games as an Xbox 360 pad" src="https://raw.githubusercontent.com/jkfran/stadiacast/main/docs/images/flow.svg" width="680">
 </p>
 
 ## Quick start
