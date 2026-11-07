@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-11-07
+
+Fixes from the first run on a real Windows PC: the headset stream no longer pauses while the
+computer is silent, a helper that cannot start is reported with the reason, and a lab run keeps
+its certificate out of `certs/`.
+
 ### Fixed
 - On Windows the headset stream stopped whenever the computer fell silent and resumed with the
   next sound, because WASAPI feeds a loopback only while something plays: the capture now
@@ -80,6 +86,7 @@ confirmed against real controllers running the last Wi-Fi firmware, `ota.282115`
   security policy, code of conduct.
 - MIT License, with a `NOTICE` for the three protobuf schemas reproduced from the firmware.
 
-[Unreleased]: https://github.com/jkfran/stadiacast/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/jkfran/stadiacast/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/jkfran/stadiacast/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/jkfran/stadiacast/compare/v0.1.0...v1.0.0
 [0.1.0]: https://github.com/jkfran/stadiacast/releases/tag/v0.1.0
