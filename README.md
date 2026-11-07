@@ -198,8 +198,7 @@ Every report reaches the pad as XInput fields with the standard stick deadzones
 (`--gamepad-deadzone off` for raw sticks); the Stadia button is the guide button, Assistant
 and Capture have no XInput equivalent. The game's rumble comes back to the controller through
 the game session, which `--gamepad` starts for that reason. Two controllers are players 1 and
-2, and `/_status` lists the pads under `gamepads`. The pad has not been run on a real Windows
-PC yet.
+2, and `/_status` lists the pads under `gamepads`.
 
 ## Development
 
