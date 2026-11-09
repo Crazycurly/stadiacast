@@ -7,6 +7,11 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- `stadiacast-provision provision` now reads the crypto window (the device RSA public key)
+  before triggering the controller's Wi-Fi scan. The controller often drops the BLE link
+  seconds after its scan ends, when the Wi-Fi radio comes up, and that is exactly where the
+  old order asked for the key: provisioning failed with `Not connected` on much hardware.
+  Measured on three controllers, see #5.
 - `stadiacast-provision` reads windows of up to 24 pages instead of 16, and a window that
   arrives cut short now ends it with one line asking to run it again, instead of a traceback.
 

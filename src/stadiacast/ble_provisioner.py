@@ -257,7 +257,7 @@ async def provision(
     service_data_match: str | None = None,
     wait: float = 45.0,
 ) -> None:
-    """Scan, encrypt the password with the device key and write the connect payload."""
+    """Read the crypto window, scan, encrypt the password with the device key and write the connect payload."""
     print(f"Looking for {address} (up to 30s)...")
     wanted = service_data_match.lower() if service_data_match else None
 
@@ -278,21 +278,23 @@ async def provision(
         await client.start_notify(CHAR_STATE, on_state)
         await client.start_notify(CHAR_OTA_STATUS, on_ota)
 
-        # 1. scan and copy the device-reported security enums for the target
-        print(f"Scanning for {ssid!r}...")
-        net = await trigger_scan_and_get_network(client, ssid)
-        print(
-            f"Found: {net['ssid']} ({net['signal_level']} dBm, bssid {net['bssid']}, "
-            f"wpa_auth={net['wpa_auth']}, wpa_cipher={net['wpa_cipher']})"
-        )
-
-        # 2. fetch the device RSA public key and encrypt the password
+        # 1. fetch the device RSA public key while the link is young: the controller usually
+        # drops the BLE link seconds after its own Wi-Fi scan finishes (the radio coming up
+        # costs the connection), and the scan is exactly what step 2 triggers (#5)
         enc = None
         if password:
             bundle = window_payload(await window_read(client, WINDOW_CRYPTO))
             public_key = load_public_key(bundle)
             print(f"Device RSA public key: {public_key.key_size} bits")
             enc = encrypt_password(password, public_key)
+
+        # 2. scan and copy the device-reported security enums for the target
+        print(f"Scanning for {ssid!r}...")
+        net = await trigger_scan_and_get_network(client, ssid)
+        print(
+            f"Found: {net['ssid']} ({net['signal_level']} dBm, bssid {net['bssid']}, "
+            f"wpa_auth={net['wpa_auth']}, wpa_cipher={net['wpa_cipher']})"
+        )
 
         payload = build_connect_payload(
             ssid,

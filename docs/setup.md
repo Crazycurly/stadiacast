@@ -205,9 +205,11 @@ stadiacast-provision scan                                 # find the controller 
 stadiacast-provision provision --address <ADDR> --ssid <SSID>      # prompts for the password
 ```
 
-The tool triggers a Wi-Fi scan on the controller, copies the security parameters it reports
-for your network, encrypts the password with the controller's own RSA public key and writes
-the credentials. The BLE link dropping right after the write is normal: the controller leaves
+The tool reads the crypto window (the controller's RSA public key) first, then triggers a
+Wi-Fi scan and copies the security parameters it reports for your network, encrypts the
+password and writes the credentials. The key is read before the scan on purpose: the
+controller often drops the BLE link a few seconds after its Wi-Fi scan ends, when the radio
+comes up. The BLE link dropping right after the write is normal: the controller leaves
 setup mode.
 
 **What to expect on the first boot** (seen live on firmware `ota.282115`): the controller joins
