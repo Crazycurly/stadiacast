@@ -7,10 +7,8 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
-- `stadiacast-provision`: a torn windowed read no longer crashes the tool. The gzip module
-  raises `EOFError` (not an `OSError`) for a stream cut before its trailer, which escaped
-  `window_payload`'s handler; and the page budget moved from 16 to 24: the crypto bundle is
-  already > 8 pages *compressed*, so 16 left little headroom on other key/cert builds (#5).
+- `stadiacast-provision` reads windows of up to 24 pages instead of 16, and a window that
+  arrives cut short now ends it with one line asking to run it again, instead of a traceback.
 
 ## [1.0.1] - 2026-11-07
 

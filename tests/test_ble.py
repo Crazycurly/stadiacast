@@ -33,9 +33,11 @@ def test_window_payload_decompresses_gzip_only():
 
 
 def test_window_payload_survives_a_torn_gzip_stream():
-    # EOFError (not OSError) when the gzip trailer is missing: it must not escape (#5)
+    # gzip raises EOFError for a stream cut short and zlib.error for corrupt data, neither an OSError
     torn = gzip.compress(b'{"ssid": "net"}')[:-4]
     assert ble.window_payload(torn) == torn
+    corrupt = b"\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\x03" + b"\xff" * 8  # a gzip header, then an invalid block
+    assert ble.window_payload(corrupt) == corrupt
 
 
 @pytest.mark.usefixtures("fake_ble")  # the fixture also fast-forwards asyncio.sleep
@@ -120,6 +122,7 @@ class FakeClient:
 
     mtu_size = 517  # what the controller negotiates: the credential JSON is one ATT write
     instances: ClassVar[list[FakeClient]] = []
+    torn: ClassVar[set[tuple[str, str]]] = set()  # windows that arrive cut short
 
     def __init__(self, device: Any, timeout: float | None = None) -> None:  # noqa: ARG002
         self.device = device
@@ -154,9 +157,13 @@ class FakeClient:
         if char == ble.CHAR_IP:
             return bytearray(b"\xc0\xa8\x02\x03")
         windows = {ble.WINDOW_SCAN: json.dumps(SCAN_RESULTS).encode(), ble.WINDOW_CRYPTO: crypto_bundle()}
-        for (data_char, control_char), payload in windows.items():
+        for pair, payload in windows.items():
+            data_char, control_char = pair
             if char == data_char:
-                return bytearray(gzip.compress(payload) if self.pages.get(control_char, 0) == 0 else b"")
+                blob = gzip.compress(payload)
+                if pair in self.torn:
+                    blob = blob[: len(blob) // 2]
+                return bytearray(blob if self.pages.get(control_char, 0) == 0 else b"")
         raise AssertionError(f"unexpected read of {char}")
 
 
@@ -180,6 +187,7 @@ def fake_ble(monkeypatch):
     monkeypatch.setattr(ble.asyncio, "sleep", instant_sleep)
     monkeypatch.setattr(ble, "BleakClient", FakeClient)
     monkeypatch.setattr(ble, "BleakScanner", FakeScanner)
+    monkeypatch.setattr(FakeClient, "torn", set())
     FakeClient.instances.clear()
     return FakeClient
 
@@ -221,3 +229,12 @@ def test_provision_errors_are_reported_not_raised_as_tracebacks():
         asyncio.run(ble.provision("unknown-address", "hotspot", "x", wait=0.01))
     with pytest.raises(ble.ProvisioningError, match="not found in scan results"):
         asyncio.run(ble.provision(FakeScanner.device.address, "elsewhere", "x", wait=0.01))
+
+
+@pytest.mark.parametrize(("window", "what"), [(ble.WINDOW_CRYPTO, "public key"), (ble.WINDOW_SCAN, "scan results")])
+def test_provision_reports_a_window_cut_short_and_writes_nothing(fake_ble, window, what):
+    fake_ble.torn = {window}
+    with pytest.raises(ble.ProvisioningError, match=f"{what} could not be read"):
+        asyncio.run(ble.provision(FakeScanner.device.address, "hotspot", "hunter2", wait=0.01))
+    (client,) = fake_ble.instances
+    assert ble.CHAR_CONNECT not in [c for c, _ in client.writes]

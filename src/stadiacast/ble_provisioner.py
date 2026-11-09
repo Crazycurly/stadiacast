@@ -32,6 +32,7 @@ import json
 import os
 import re
 import sys
+import zlib
 from collections.abc import Sequence
 from typing import Any
 
@@ -121,18 +122,23 @@ def encrypt_password(password: str, public_key: Any) -> str:
 
 def load_public_key(bundle_json: bytes) -> Any:
     """The RSA public key from the crypto-bundle window JSON (pair 1a)."""
-    bundle = json.loads(bundle_json.decode("utf-8", "replace"))
-    spki = base64.b64decode(bundle["device_info"]["public_key"])
+    try:
+        bundle = json.loads(bundle_json.decode("utf-8", "replace"))
+        spki = base64.b64decode(bundle["device_info"]["public_key"])
+    except (ValueError, KeyError, TypeError) as e:
+        raise ProvisioningError(
+            f"the controller's public key could not be read ({len(bundle_json)} bytes): run the command again"
+        ) from e
     return serialization.load_der_public_key(spki)
 
 
 def window_payload(data: bytes) -> bytes:
-    """Decompress a windowed read when it is gzip; a truncated stream is returned raw."""
+    """Decompress a windowed read when it is gzip; one that does not decompress is returned as read."""
     if data[:2] == b"\x1f\x8b":
         try:
             return gzip.decompress(data)
-        except Exception:
-            pass  # a torn stream does not always raise OSError: gzip also raises EOFError (#5)
+        except (OSError, EOFError, zlib.error):  # a stream cut short raises EOFError, corrupt data zlib.error
+            pass
     return data
 
 
@@ -149,8 +155,7 @@ def is_stadia_advertiser(device: Any, adv: Any) -> bool:
 async def window_read(client: Any, pair: tuple[str, str], pages: int = 24) -> bytes:
     """Read a windowed-read pair page by page via its control characteristic.
 
-    24 pages by default: the crypto bundle is > 8 pages *compressed*, so the old 16 left
-    little headroom on other key/cert builds (a truncated read fails in window_payload, #5).
+    Up to 24 pages of 512 bytes by default: the crypto bundle alone has taken 13.
     """
     rd, wr = pair
     chunks = []
@@ -177,7 +182,13 @@ async def trigger_scan_and_get_network(client: Any, ssid: str, timeout_s: float 
         state = (await client.read_gatt_char(CHAR_STATE))[0]
         if state == STATE_SCAN_DONE:
             break
-    results: list[dict[str, Any]] = json.loads(window_payload(await window_read(client, WINDOW_SCAN)))
+    raw = window_payload(await window_read(client, WINDOW_SCAN))
+    try:
+        results: list[dict[str, Any]] = json.loads(raw)
+    except ValueError as e:
+        raise ProvisioningError(
+            f"the controller's scan results could not be read ({len(raw)} bytes): run the command again"
+        ) from e
     for net in results:
         if net.get("ssid") == ssid:
             return net
