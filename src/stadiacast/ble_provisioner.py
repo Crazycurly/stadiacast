@@ -257,7 +257,7 @@ async def provision(
     service_data_match: str | None = None,
     wait: float = 45.0,
 ) -> None:
-    """Read the crypto window, scan, encrypt the password with the device key and write the connect payload."""
+    """Read the device key, scan for the network and write the credentials with the password encrypted."""
     print(f"Looking for {address} (up to 30s)...")
     wanted = service_data_match.lower() if service_data_match else None
 
@@ -278,9 +278,8 @@ async def provision(
         await client.start_notify(CHAR_STATE, on_state)
         await client.start_notify(CHAR_OTA_STATUS, on_ota)
 
-        # 1. fetch the device RSA public key while the link is young: the controller usually
-        # drops the BLE link seconds after its own Wi-Fi scan finishes (the radio coming up
-        # costs the connection), and the scan is exactly what step 2 triggers (#5)
+        # 1. the device RSA public key, before the scan of step 2: some controllers drop the BLE
+        # link a few seconds after that scan, and the key is the longest read of the exchange
         enc = None
         if password:
             bundle = window_payload(await window_read(client, WINDOW_CRYPTO))

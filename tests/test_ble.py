@@ -196,7 +196,7 @@ def test_provision_scans_copies_the_security_enums_and_writes_encrypted_credenti
     asyncio.run(ble.provision(FakeScanner.device.address, "hotspot", "hunter2", wait=0.01))
     (client,) = fake_ble.instances
     chars = [c for c, _ in client.writes]
-    assert chars[0] == ble.WINDOW_CRYPTO[1]  # the key read comes before the Wi-Fi rescan (#5)
+    assert chars[0] == ble.WINDOW_CRYPTO[1]  # the key read comes before the Wi-Fi rescan
     assert ble.CHAR_SETTINGS in chars  # the scan is still triggered, after the key
     assert chars[-1] == ble.CHAR_CONNECT
     payload = json.loads(client.writes[-1][1])
