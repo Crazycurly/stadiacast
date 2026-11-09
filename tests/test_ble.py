@@ -69,6 +69,10 @@ def test_cli_requires_a_subcommand_and_knows_the_match_option():
         parser.parse_args([])
     args = parser.parse_args(["provision", "-a", "ADDR", "-s", "net", "--service-data-match", "7AC0"])
     assert (args.cmd, args.address, args.ssid, args.service_data_match) == ("provision", "ADDR", "net", "7AC0")
+    args = parser.parse_args(
+        ["provision", "-a", "ADDR", "-s", "net", "--skip-scan", "--wpa-auth", "7", "--wpa-cipher", "4"]
+    )
+    assert args.skip_scan and (args.wpa_auth, args.wpa_cipher) == (7, 4)
     assert ble.STATE_NAMES[0x3C] == "connected"
 
 
@@ -222,6 +226,28 @@ def test_provision_matches_by_service_data_and_overrides(fake_ble):
     assert (payload["wpa_auth"], payload["wpa_cipher"]) == (1, 1)
     assert "enc_passwd" not in payload  # an open network: nothing to encrypt, no key read
     assert not any(c == ble.WINDOW_CRYPTO[1] for c, _ in client.writes)
+
+
+def test_provision_skip_scan_never_touches_the_scan_and_drops_bssid(fake_ble):
+    asyncio.run(
+        ble.provision(
+            FakeScanner.device.address, "hotspot", "hunter2", wpa_auth=7, wpa_cipher=4, wait=0.01, skip_scan=True
+        )
+    )
+    (client,) = fake_ble.instances
+    chars = [c for c, _ in client.writes]
+    assert ble.CHAR_SETTINGS not in chars  # no settings write: no Wi-Fi scan, the link survives
+    assert ble.WINDOW_SCAN[1] not in chars
+    payload = json.loads(client.writes[-1][1])
+    assert (payload["wpa_auth"], payload["wpa_cipher"]) == (7, 4)  # supplied, not scan-copied
+    assert "bssid" not in payload and "frequency" not in payload  # the controller joins without them
+    assert PRIVATE_KEY.decrypt(base64.b64decode(payload["enc_passwd"]), padding.PKCS1v15()) == b"hunter2"
+
+
+@pytest.mark.usefixtures("fake_ble")
+def test_provision_skip_scan_demands_the_security_enums():
+    with pytest.raises(ble.ProvisioningError, match="--skip-scan needs"):
+        asyncio.run(ble.provision(FakeScanner.device.address, "hotspot", "x", wait=0.01, skip_scan=True))
 
 
 @pytest.mark.usefixtures("fake_ble")

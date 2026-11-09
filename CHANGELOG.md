@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- `stadiacast-provision provision --skip-scan`: don't trigger the controller's Wi-Fi scan and
+  take `--wpa-auth`/`--wpa-cipher` as given (e.g. `7`/`4` for WPA2-PSK/CCMP). The controller
+  often drops the BLE link seconds after its scan ends, which kills the stock flow halfway;
+  without the scan the whole exchange fits inside the link's lifetime, and the controller
+  joins by itself without `bssid`/`frequency`. See #5.
+
 ### Fixed
 - `stadiacast-provision` reads the controller's public key before it starts the controller's
   Wi-Fi scan: some controllers drop the Bluetooth link a few seconds after that scan, and the

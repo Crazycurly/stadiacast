@@ -8,6 +8,7 @@ controller; making it automatic is on the roadmap.
     stadiacast-provision list-services --address ADDR
     stadiacast-provision windows --address ADDR
     stadiacast-provision provision --address ADDR --ssid SSID [--password PASS]
+    stadiacast-provision provision --address ADDR --ssid SSID --skip-scan --wpa-auth 7 --wpa-cipher 4
 
 Protocol summary (service 0000fea0-...):
     0328fe40-002f-11e5-87d0-0002a5d5c51b  write   connect_to_network JSON
@@ -256,8 +257,16 @@ async def provision(
     wpa_cipher: int | None = None,
     service_data_match: str | None = None,
     wait: float = 45.0,
+    skip_scan: bool = False,
 ) -> None:
-    """Read the device key, scan for the network and write the credentials with the password encrypted."""
+    """Read the device key, scan for the network and write the credentials with the password encrypted.
+
+    With ``skip_scan`` the controller's Wi-Fi scan is not triggered at all: ``wpa_auth`` and
+    ``wpa_cipher`` must then be supplied, and the whole exchange fits inside the short lifetime
+    of the BLE link (the controller tends to drop it seconds after a scan, see #5).
+    """
+    if skip_scan and (wpa_auth is None or wpa_cipher is None):
+        raise ProvisioningError("--skip-scan needs --wpa-auth and --wpa-cipher: nothing reads them from the scan")
     print(f"Looking for {address} (up to 30s)...")
     wanted = service_data_match.lower() if service_data_match else None
 
@@ -287,21 +296,31 @@ async def provision(
             print(f"Device RSA public key: {public_key.key_size} bits")
             enc = encrypt_password(password, public_key)
 
-        # 2. scan and copy the device-reported security enums for the target
-        print(f"Scanning for {ssid!r}...")
-        net = await trigger_scan_and_get_network(client, ssid)
-        print(
-            f"Found: {net['ssid']} ({net['signal_level']} dBm, bssid {net['bssid']}, "
-            f"wpa_auth={net['wpa_auth']}, wpa_cipher={net['wpa_cipher']})"
-        )
+        # 2. scan and copy the device-reported security enums for the target, unless skipped:
+        # the scan is what costs the BLE link, and the controller joins fine without bssid/frequency
+        net = None
+        if not skip_scan:
+            print(f"Scanning for {ssid!r}...")
+            net = await trigger_scan_and_get_network(client, ssid)
+            print(
+                f"Found: {net['ssid']} ({net['signal_level']} dBm, bssid {net['bssid']}, "
+                f"wpa_auth={net['wpa_auth']}, wpa_cipher={net['wpa_cipher']})"
+            )
+
+        def enums(override: int | None, key: str) -> int:
+            if override is not None:
+                return override
+            if net is not None:
+                return int(net[key])
+            raise ProvisioningError(f"no {key}: pass the override or drop --skip-scan")
 
         payload = build_connect_payload(
             ssid,
             enc,
-            wpa_auth if wpa_auth is not None else net["wpa_auth"],
-            wpa_cipher if wpa_cipher is not None else net["wpa_cipher"],
-            bssid=net.get("bssid"),
-            frequency=net.get("frequency"),
+            enums(wpa_auth, "wpa_auth"),
+            enums(wpa_cipher, "wpa_cipher"),
+            bssid=net.get("bssid") if net else None,
+            frequency=net.get("frequency") if net else None,
         )
         message = json.dumps(payload, separators=(",", ":"))
         print(f"-> {CHAR_CONNECT[:2]}: {redact(message)}")
@@ -342,6 +361,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_pr.add_argument("--wpa-auth", type=int, default=None, help="override (default: copy from device scan results)")
     p_pr.add_argument("--wpa-cipher", type=int, default=None, help="override (default: copy from device scan results)")
     p_pr.add_argument(
+        "--skip-scan",
+        action="store_true",
+        help="do not trigger the controller's Wi-Fi scan (requires --wpa-auth/--wpa-cipher; e.g. 7 4 for "
+        "WPA2-PSK/CCMP): keeps the whole exchange inside the short lifetime of the BLE link (#5)",
+    )
+    p_pr.add_argument(
         "--service-data-match",
         metavar="HEX",
         default=None,
@@ -376,6 +401,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     wpa_cipher=args.wpa_cipher,
                     service_data_match=args.service_data_match,
                     wait=args.wait,
+                    skip_scan=args.skip_scan,
                 )
             )
     except KeyboardInterrupt:
