@@ -32,6 +32,35 @@ def test_window_payload_decompresses_gzip_only():
     assert ble.window_payload(b"\x1f\x8btruncated") == b"\x1f\x8btruncated"
 
 
+def test_window_payload_survives_a_torn_gzip_stream():
+    # EOFError (not OSError) when the gzip trailer is missing: it must not escape (#5)
+    torn = gzip.compress(b'{"ssid": "net"}')[:-4]
+    assert ble.window_payload(torn) == torn
+
+
+@pytest.mark.usefixtures("fake_ble")  # the fixture also fast-forwards asyncio.sleep
+def test_window_read_walks_pages_until_a_short_read():
+    class Paging:
+        def __init__(self) -> None:
+            self.requested: list[int] = []
+
+        async def write_gatt_char(self, char: str, data: bytes, response: bool = True) -> None:  # noqa: ARG002
+            self.requested.append(int.from_bytes(data, "little"))
+
+        async def read_gatt_char(self, char: str) -> bytes:  # noqa: ARG002
+            page = self.requested[-1]
+            if page == 0:
+                return b"a" * 512  # full page: keep going
+            if page == 1:
+                return b"b" * 300  # short page: last one
+            raise AssertionError("read past the short page")
+
+    client = Paging()
+    out = asyncio.run(ble.window_read(client, ble.WINDOW_CRYPTO))
+    assert out == b"a" * 512 + b"b" * 300
+    assert client.requested == [0, 1]  # the default page budget is not spent on a two-page payload
+
+
 def test_cli_requires_a_subcommand_and_knows_the_match_option():
     parser = ble.build_parser()
     with pytest.raises(SystemExit):

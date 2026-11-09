@@ -131,8 +131,8 @@ def window_payload(data: bytes) -> bytes:
     if data[:2] == b"\x1f\x8b":
         try:
             return gzip.decompress(data)
-        except OSError:
-            pass
+        except Exception:
+            pass  # a torn stream does not always raise OSError: gzip also raises EOFError (#5)
     return data
 
 
@@ -146,8 +146,12 @@ def is_stadia_advertiser(device: Any, adv: Any) -> bool:
     return FAST_PAIR_SERVICE_DATA_UUID in (adv.service_data or {}) or any(h in name.lower() for h in STADIA_NAME_HINTS)
 
 
-async def window_read(client: Any, pair: tuple[str, str], pages: int = 16) -> bytes:
-    """Read a windowed-read pair page by page via its control characteristic."""
+async def window_read(client: Any, pair: tuple[str, str], pages: int = 24) -> bytes:
+    """Read a windowed-read pair page by page via its control characteristic.
+
+    24 pages by default: the crypto bundle is > 8 pages *compressed*, so the old 16 left
+    little headroom on other key/cert builds (a truncated read fails in window_payload, #5).
+    """
     rd, wr = pair
     chunks = []
     for page in range(pages):
