@@ -91,6 +91,23 @@ def test_main_reports_a_missing_ble_extra(monkeypatch, capsys):
     assert "stadiacast[ble]" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("kind", ["bleak", "winrt"])
+def test_main_reports_a_dropped_link_in_one_line_and_points_at_skip_scan(fake_ble, monkeypatch, capsys, kind):
+    exc = pytest.importorskip("bleak.exc")
+    # the two forms a dropped link took on a real controller: bleak's own error and WinRT's OSError
+    error = exc.BleakError("Not connected") if kind == "bleak" else OSError("The object has been closed.")
+
+    async def link_gone(_self: Any, _char: str) -> bytearray:
+        raise error
+
+    monkeypatch.setattr(fake_ble, "read_gatt_char", link_gone)
+    argv = ["provision", "-a", FakeScanner.device.address, "-s", "hotspot", "-p", "hunter2", "--wait", "0"]
+    assert ble.main(argv) == 1
+    err = capsys.readouterr().err
+    assert f"stadiacast-provision: Bluetooth: {error}" in err
+    assert "--skip-scan" in err and "Traceback" not in err
+
+
 # ---- the provisioning flow against a fake controller --------------------------------------
 
 PRIVATE_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)

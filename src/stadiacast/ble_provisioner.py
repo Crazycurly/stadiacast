@@ -42,6 +42,7 @@ from cryptography.hazmat.primitives.asymmetric import padding
 
 try:
     from bleak import BleakClient, BleakScanner
+    from bleak.exc import BleakError
 except ImportError:  # the ble extra is optional: main() says so
     BLEAK_AVAILABLE = False
 else:
@@ -403,6 +404,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         print()
     except ProvisioningError as e:
         print(f"stadiacast-provision: {e}", file=sys.stderr)
+        return 1
+    except (BleakError, OSError) as e:  # the Bluetooth stack: a dropped link, a timeout, Bluetooth off
+        print(f"stadiacast-provision: Bluetooth: {str(e) or type(e).__name__}", file=sys.stderr)
+        if args.cmd == "provision":
+            print(
+                "If this came right after STATE 0x16, the controller dropped the link after its Wi-Fi scan:\n"
+                "run it again with --skip-scan --wpa-auth 7 --wpa-cipher 4 (WPA2-Personal; see --help).",
+                file=sys.stderr,
+            )
         return 1
     return 0
 

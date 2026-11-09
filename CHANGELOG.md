@@ -17,6 +17,9 @@ All notable changes to this project are documented here. The format follows
   key was the longest read left after it.
 - `stadiacast-provision` reads windows of up to 24 pages instead of 16, and a window that
   arrives cut short now ends it with one line asking to run it again, instead of a traceback.
+- A Bluetooth failure (a dropped link, a timeout, Bluetooth turned off) ends
+  `stadiacast-provision` with one line instead of a traceback, and when the link drops during
+  `provision` it says when `--skip-scan` helps.
 
 ## [1.0.1] - 2026-11-07
 
