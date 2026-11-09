@@ -210,12 +210,11 @@ and copies the security parameters it reports for yours, then writes the credent
 password encrypted under that key. The BLE link dropping right after the write is normal: the
 controller leaves setup mode.
 
-Controllers often drop the BLE link a few seconds after their own Wi-Fi scan ends (the radio
-coming up costs the connection), which can kill the flow halfway (`Not connected`, #5).
-`--skip-scan` skips the controller-side scan entirely — pass the security parameters of your
-network yourself, `--wpa-auth 7 --wpa-cipher 4` for plain WPA2-PSK/AES — and the whole
-exchange then fits inside the link's lifetime. The controller scans and joins by itself after
-the credentials arrive; `bssid`/`frequency` are a convenience, not a requirement.
+Some controllers drop the BLE link a few seconds after that Wi-Fi scan, before the credentials
+are written: the tool then stops with a Bluetooth error after `STATE -> 0x16 (scan/netcheck
+done)`. Run it again with `--skip-scan` and give your network's security yourself,
+`--wpa-auth 7 --wpa-cipher 4` for WPA2-Personal (AES) or `1` and `1` for an open network. The
+controller then finds the network by itself.
 
 **What to expect on the first boot** (seen live on firmware `ota.282115`): the controller joins
 the Wi-Fi, blinks white, resolves the Google names through the receiver and registers with it
