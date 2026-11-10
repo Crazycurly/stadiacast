@@ -1598,7 +1598,7 @@ requires-dist = [
     { name = "pyaudiowpatch", marker = "sys_platform == 'win32' and extra == 'audio'", specifier = ">=0.2.12" },
     { name = "pyopenssl", specifier = ">=24.3" },
     { name = "sounddevice", marker = "sys_platform != 'win32' and extra == 'audio'", specifier = ">=0.4.6" },
-    { name = "vgamepad", marker = "sys_platform == 'win32' and extra == 'gamepad'", specifier = ">=0.1.0" },
+    { name = "vgamepad", marker = "sys_platform == 'win32' and extra == 'gamepad'", specifier = ">=0.2" },
 ]
 provides-extras = ["audio", "ble", "gamepad", "passthrough"]
 

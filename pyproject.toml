@@ -36,7 +36,7 @@ dependencies = [
 [project.optional-dependencies]
 ble = ["bleak>=0.21"]
 passthrough = ["aiohttp>=3.9"]
-gamepad = ["vgamepad>=0.1.0; sys_platform == 'win32'"]  # the ViGEm virtual gamepad (Windows)
+gamepad = ["vgamepad>=0.2; sys_platform == 'win32'"]  # the ViGEm virtual gamepad (Windows)
 audio = [  # system audio capture: PortAudio everywhere, WASAPI loopback on Windows
   "sounddevice>=0.4.6; sys_platform != 'win32'",
   "pyaudiowpatch>=0.2.12; sys_platform == 'win32'",
