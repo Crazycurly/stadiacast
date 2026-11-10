@@ -13,14 +13,14 @@
 // (the table only says "varint, 1 byte"); every static field is OPTIONAL with a
 // has_ flag; the ControllerToDisplay variants are a nanopb oneof.
 //
-// Compile: python3 tools/compile_protos.py   (see README.md in this directory)
+// Compile: python3 -m stadiacast.schema_compiler   (see README.md in this directory)
 
 syntax = "proto2";
 
 package gotham.display;
 
 // ---------------------------------------------------------------------------
-// Display -> controller.  nanopb table 0x6037c5ce, struct 0x118 bytes, 25 optional
+// Display -> controller.  A nanopb table, struct 0x118 bytes, 25 optional
 // sub-messages.  Requests and notifications from the display, and the display's
 // responses to the controller's requests, all decode as this type.  Routing in
 // HandleIncomingRpcMessage: request with #2 -> event 3 GET_CONTROLLER_STATE_RECEIVED,
@@ -37,7 +37,7 @@ message DisplayToController {
   optional Empty request6 = 6;
   optional Empty request7 = 7;
   optional StringAndInt start_game = 8;                    // (str, int default 1)
-                                                           // (app event 0xb START_GAME; reply held until GAME_STARTED/STOPPED)
+                                                           // (START_GAME; reply held until GAME_STARTED/STOPPED)
   optional String23 stop_game = 9;                         // (str) STOP_GAME
   optional String31 request10 = 10;                        // (str)
   optional String31 request11 = 11;                        // (str)
@@ -58,7 +58,7 @@ message DisplayToController {
 }
 
 // ---------------------------------------------------------------------------
-// Controller -> display.  nanopb table 0x6037cdb7, struct 0x268 bytes, a 17-variant
+// Controller -> display.  A nanopb table, struct 0x268 bytes, a 17-variant
 // oneof.  The variant is the `which` value each sender stores after zeroing the struct.
 // ---------------------------------------------------------------------------
 message ControllerToDisplay {
@@ -151,7 +151,7 @@ message SetAudioModeRequest {
   optional bool f3 = 3;
 }
 
-// Same table (0x6037d523) in both directions.  "KeepaliveStatusNotification
+// The same table in both directions.  "KeepaliveStatusNotification
 // from display: keepalive resumed" (1) / "... keepalive missing" (2).
 message KeepaliveStatus {
   optional uint32 status = 1;                  // 1 byte: 1 = RESUMED, 2 = MISSING
@@ -220,7 +220,7 @@ message GetControllerStateResponse {
   optional uint32 f20 = 20;                    // 1 byte; set to 1
 }
 
-// Sub-table 0x6037d410 (340 bytes), shared by GetControllerStateResponse.9 and
+// A sub-table (340 bytes), shared by GetControllerStateResponse.9 and
 // AudioConfigurationChanged.3.
 message DeviceInfo {
   optional int32 f1 = 1;
@@ -228,7 +228,7 @@ message DeviceInfo {
   optional int32 f3 = 3;
   optional bytes f4 = 4;                       // max 258; a 16-byte key for the controller's UDP audio receiver
   optional bool f5 = 5;
-  optional int32 f6 = 6;                       // UDP port of that receiver (9989 seen live)
+  optional int32 f6 = 6;                       // UDP port of that receiver (9989)
   optional bool f7 = 7;
 }
 
