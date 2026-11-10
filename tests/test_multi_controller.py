@@ -4,8 +4,29 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
+import socket
 
+from stadiacast import receiver as receiver_module
 from tests.helpers import fake, make_receiver, wait_for
+
+
+def free_udp_ports(count: int) -> int:
+    """The first of ``count`` consecutive UDP ports that are free on loopback right now."""
+    for _ in range(100):
+        first = random.randrange(20000, 60000)
+        socks: list[socket.socket] = []
+        try:
+            for port in range(first, first + count):
+                socks.append(socket.socket(socket.AF_INET, socket.SOCK_DGRAM))
+                socks[-1].bind(("127.0.0.1", port))
+        except OSError:
+            continue
+        finally:
+            for s in socks:
+                s.close()
+        return first
+    raise AssertionError("no run of free UDP ports found")
 
 
 def test_two_controllers_connect_at_the_same_time_and_are_kept_apart(tmp_path):
@@ -133,6 +154,91 @@ def test_gmsg_poll_from_an_unknown_controller_gets_an_empty_answer(tmp_path):
             await fc.boot()
             assert rx.find("fake-x") is rx.single()
         finally:
+            fc.close()
+            await rx.stop()
+
+    asyncio.run(run())
+
+
+def test_first_requests_of_one_controller_arriving_together_open_one_session(tmp_path):
+    """Opening a session waits for its sockets; a second request of the same controller that
+    arrives during that wait joins the session instead of opening another."""
+
+    async def run():
+        rx = make_receiver(tmp_path)
+        await rx.start()
+        fc = fake(rx, "fake-a")
+        try:
+            check = ("POST", "cloudcast-pa.googleapis.com", "/v1:FirmwareVersionCheck?key=FAKEKEY", b"")
+            answers = await asyncio.gather(
+                *(fc.request(*check, "application/x-protobuf", fc.rpc_headers()) for _ in range(4))
+            )
+            assert [st for st, _, _ in answers] == [200] * 4
+            assert list(rx.controllers) == ["c0"] and rx.find("fake-a") is rx.single()
+        finally:
+            fc.close()
+            await rx.stop()
+
+    asyncio.run(run())
+
+
+def test_a_controller_beyond_the_limit_takes_over_the_ports_of_the_one_idle_longest(tmp_path, monkeypatch):
+    """With every session taken, a new controller makes the receiver forget the one idle the longest,
+    and its session binds the two fixed UDP ports that one held, within the same request."""
+    monkeypatch.setattr(receiver_module, "MAX_CONTROLLERS", 2)
+    first = free_udp_ports(4)
+
+    async def run():
+        rx = make_receiver(tmp_path, udp_port=first, game_udp_port=first + 1)
+        await rx.start()
+        fakes = [fake(rx, f"fake-{name}") for name in "abc"]
+        try:
+            await fakes[0].boot()
+            await fakes[1].boot()
+            a = rx.find("fake-a")
+            assert a is not None and (a.endpoint.local_port, a.game.endpoint.local_port) == (first, first + 1)
+            booted = await fakes[2].boot()
+            assert booted["firmware_version_check"][0] == 200 and booted["register_controller"][0] == 200
+            c = rx.find("fake-c")
+            assert c is not None and rx.find("fake-a") is None
+            assert set(rx.controllers.values()) == {rx.find("fake-b"), c}
+            assert (c.endpoint.local_port, c.game.endpoint.local_port) == (first, first + 1)
+            assert [r["key"] for r in rx.log.records if r["event"] == "controller_evicted"] == ["cloud-fake-a"]
+            assert not [r for r in rx.log.records if r["event"] == "handler_error"]
+        finally:
+            for f in fakes:
+                f.close()
+            await rx.stop()
+
+    asyncio.run(run())
+
+
+def test_a_udp_port_taken_by_another_program_is_tried_again_at_the_next_request(tmp_path):
+    """A session whose UDP port cannot be bound fails that request and keeps nothing: the
+    controller's next request tries the same pair of ports, and gets them once they are free."""
+    first = free_udp_ports(4)
+    other_program = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    other_program.bind(("127.0.0.1", first + 1))  # the game port of the first session
+
+    async def run():
+        rx = make_receiver(tmp_path, udp_port=first, game_udp_port=first + 1)
+        await rx.start()
+        fc = fake(rx, "fake-a")
+        try:
+            st, _, _ = await fc.request(
+                "POST", "cloudcast-pa.googleapis.com", "/v1:FirmwareVersionCheck?key=FAKEKEY", b"",
+                "application/x-protobuf", fc.rpc_headers(),
+            )  # fmt: skip
+            assert st == 500 and rx.controllers == {}
+            errors = [r["error"] for r in rx.log.records if r["event"] == "handler_error"]
+            assert len(errors) == 1 and f"cannot bind UDP 127.0.0.1:{first + 1} (game)" in errors[0]
+            other_program.close()
+            booted = await fc.boot()
+            assert booted["register_controller"][0] == 200
+            ctl = rx.single()
+            assert (ctl.label, ctl.endpoint.local_port, ctl.game.endpoint.local_port) == ("c0", first, first + 1)
+        finally:
+            other_program.close()
             fc.close()
             await rx.stop()
 

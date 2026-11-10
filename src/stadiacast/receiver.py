@@ -74,6 +74,7 @@ class Receiver:
         self._by_token: dict[str, ControllerSession] = {}  # display token -> session (GMsg attribution)
         self._free_slots: list[int] = []
         self._next_slot = 0
+        self._create_lock = asyncio.Lock()  # one session is opened at a time (see controller_for)
         self.events: asyncio.Queue[dict[str, Any]] | None = None  # decoded input events of every controller
         self._body_seq = 0
         self._clock_base: float | None = None  # pinned epoch (cfg.clock_pin); None = real time
@@ -248,22 +249,15 @@ class Receiver:
         cloud = req.header("controller-cloud-device-id")
         serial = req.header("controller-device-id")
         ids = [x for x in (device_id, cloud, serial) if x]
-        ctl: ControllerSession | None = None
-        if token:
-            ctl = self._by_token.get(token)
-        for ident in ids:
-            if ctl is not None:
-                break
-            ctl = self._by_id.get(ident)
-        if ctl is None and ip:
-            known = self._by_ip.get(ip)
-            if known is not None and (not ids or known.device_id is None):
-                ctl = known  # the same address, not identified (yet): the controller we know there
+        ctl = self._known(token, ids, ip)
         if ctl is None and create:
             key = ids[0] if ids else (f"ip:{ip}" if ip else None)
             if key is None:
                 return None
-            ctl = await self._create(key, ip)
+            async with self._create_lock:
+                # Opening a session waits for its sockets, and another request of the same controller
+                # may have opened it in the meantime: look again before creating a second one.
+                ctl = self._known(token, ids, ip) or await self._create(key, ip)
         if ctl is not None:
             ctl.touch(ip, device_id=device_id or cloud, serial=serial)
             for ident in ids:
@@ -272,9 +266,26 @@ class Receiver:
                 self._by_ip[ip] = ctl
         return ctl
 
+    def _known(self, token: str | None, ids: list[str], ip: str | None) -> ControllerSession | None:
+        """The session already open for a request with this token, these ids and this address."""
+        ctl = self._by_token.get(token) if token else None
+        for ident in ids:
+            if ctl is not None:
+                break
+            ctl = self._by_id.get(ident)
+        if ctl is None and ip:
+            known = self._by_ip.get(ip)
+            if known is not None and (not ids or known.device_id is None):
+                ctl = known  # the same address, not identified (yet): the controller we know there
+        return ctl
+
     async def _create(self, key: str, ip: str | None) -> ControllerSession:
+        """Open a session, with ``_create_lock`` held.  Past :data:`MAX_CONTROLLERS` the session idle
+        the longest makes room, and the new one binds the UDP ports that one held."""
         if len(self.controllers) >= MAX_CONTROLLERS:
-            self._evict(min(self.controllers.values(), key=lambda c: c.last_seen))
+            evicted = min(self.controllers.values(), key=lambda c: c.last_seen)
+            self._evict(evicted)
+            await evicted.wait_closed()
         slot = self._free_slots.pop(0) if self._free_slots else self._next_slot
         if slot == self._next_slot:
             self._next_slot += 1
@@ -282,7 +293,15 @@ class Receiver:
         # every controller gets its own pair of UDP sockets: base port + 2 * slot (0 = ephemeral)
         udp = self.cfg.udp_port + 2 * slot if self.cfg.udp_port else 0
         game_udp = self.cfg.game_udp_port + 2 * slot if self.cfg.game_udp_port else 0
-        await ctl.start(self.cfg.bind, udp, game_udp)
+        try:
+            await ctl.start(self.cfg.bind, udp, game_udp)
+        except OSError:
+            # A port that another program holds: the slot goes back, so that the controller's next
+            # request tries the same ports again instead of walking up to the next pair.
+            ctl.stop()
+            await ctl.wait_closed()
+            self._release_slot(slot)
+            raise
         self.controllers[ctl.label] = ctl
         self._by_token[ctl.display_token] = ctl
         self.log(
@@ -311,7 +330,10 @@ class Receiver:
         for table in (self._by_id, self._by_ip):
             for k in [k for k, v in table.items() if v is ctl]:
                 del table[k]
-        self._free_slots.append(ctl.slot)
+        self._release_slot(ctl.slot)
+
+    def _release_slot(self, slot: int) -> None:
+        self._free_slots.append(slot)
         self._free_slots.sort()
 
     def _pick(self, req: HttpRequest, body: dict[str, Any] | None = None) -> ControllerSession | HttpResponse:

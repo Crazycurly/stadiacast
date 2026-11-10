@@ -16,6 +16,7 @@ datagram path: an exception in one is logged and never takes the socket down.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import secrets
 import struct
 import time
@@ -135,6 +136,8 @@ class RtcEndpoint(asyncio.DatagramProtocol):
         self.tiebreaker = secrets.token_bytes(8)
         self.transport: asyncio.DatagramTransport | None = None
         self.local_port: int | None = None
+        self._socket_closed = asyncio.Event()  # cleared while a socket is open (see wait_closed)
+        self._socket_closed.set()
         self.remote: RemotePeer | None = None
         self.dtls: DtlsSession | None = None
         self.srtp_in: SrtpContext | None = None
@@ -173,6 +176,7 @@ class RtcEndpoint(asyncio.DatagramProtocol):
     def connection_made(self, transport: asyncio.BaseTransport) -> None:
         self.transport = cast(asyncio.DatagramTransport, transport)
         self.local_port = transport.get_extra_info("sockname")[1]
+        self._socket_closed.clear()
         self.log(
             "rtc_listening",
             name=self.name,
@@ -186,6 +190,9 @@ class RtcEndpoint(asyncio.DatagramProtocol):
     def error_received(self, exc: Exception) -> None:
         self.log("rtc_socket_error", name=self.name, error=repr(exc))
 
+    def connection_lost(self, _exc: Exception | None) -> None:
+        self._socket_closed.set()
+
     def close(self) -> None:
         for h in (self._dtls_start_handle, self._dtls_timer_handle, self._keepalive_handle):
             if h:
@@ -194,6 +201,13 @@ class RtcEndpoint(asyncio.DatagramProtocol):
         if self.transport:
             self.transport.close()
             self.transport = None
+
+    async def wait_closed(self, timeout: float = 1.0) -> None:
+        """Wait until the socket is really closed.  :meth:`close` only asks asyncio for it, and the
+        port stays bound until the event loop gets to it, so whoever binds the port again waits here
+        first.  The wait gives up after ``timeout`` seconds: a port still taken then shows in that bind."""
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(self._socket_closed.wait(), timeout)
 
     def _send(self, data: bytes, addr: Addr) -> None:
         if self.transport:

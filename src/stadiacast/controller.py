@@ -189,6 +189,11 @@ class ControllerSession:
         self.game.close()
         self.endpoint.close()
 
+    async def wait_closed(self) -> None:
+        """After :meth:`stop`: wait until both UDP sockets are closed and their ports can be bound again."""
+        await self.endpoint.wait_closed()
+        await self.game.endpoint.wait_closed()
+
     def reset_boot_state(self) -> None:
         """A new offer from this controller = a new boot: per-boot timestamps and the post-DTLS tasks start over.
 
