@@ -76,6 +76,10 @@ device on the network can cost it.
   STUN or RTP header raised an error instead of being ignored.
 - A certificate that could not be loaded was reported as port 443 being held by another
   program; the error names the files. A port that needs privileges says so.
+- UDP ports held by another program were found only when a controller showed up, which then
+  never connected: the receiver now stops at start with one line that names the port.
+- A log file that could no longer be written (a full disk) broke every link; the receiver now
+  gives the file up and goes on.
 - `stadiacast-provision --help` and `stadiacast-show-input --help` are plain text, and a bad
   value for `--http-ports`, `--rpc-wire-id`, `--rpc-fields` or `--offer-json` is reported with
   the flag it was given to.
