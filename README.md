@@ -24,7 +24,8 @@ vibrates on request and plays sound on its headset jack.
 
 - 🛠️ **No firmware modification.** The receiver speaks the controller's stock protocol as is,
   and never flashes anything.
-- 🔒 **Everything stays on your network.** No Google account, no cloud, nothing leaves your LAN.
+- 🔒 **No account, no cloud service.** Input, rumble and headset audio stay between the
+  controller and your PC.
 - 📜 **Nothing to obtain.** The receiver ships a certificate the controller accepts: unpack,
   run, wake the controller.
 - 🎮 **A PC gamepad on Windows.** Every controller becomes an Xbox 360 controller for your
@@ -137,10 +138,11 @@ uv sync --all-extras
 
 or with pip, `pip install -e ".[ble,passthrough,audio,gamepad]"`. Every route installs
 `stadiacast`, `stadiacast-provision` and `stadiacast-show-input`; the `ble` extra is the
-Bluetooth provisioning, `passthrough` proxies the `stadiaconfig` request to Google, `audio`
-and `gamepad` are the [headset audio](#headset-audio) capture and the
-[virtual gamepad](#virtual-gamepad-windows). The scripts under `tools/` find the virtualenv on
-their own.
+Bluetooth provisioning, `audio` and `gamepad` are the [headset audio](#headset-audio)
+capture and the [virtual gamepad](#virtual-gamepad-windows), and `passthrough` lets the
+receiver fetch the controller's configuration (`stadiaconfig`) from Google for it, which only
+happens when `clients3.google.com` is redirected to the receiver (not by default). The scripts
+under `tools/` find the virtualenv on their own.
 
 ## Input
 
@@ -222,8 +224,10 @@ against a receiver in lab mode, and how to test against a real controller safely
 ## Security and privacy
 
 The receiver listens on your LAN with no authentication and is meant for a trusted network
-such as a hotspot you host. It never contacts Google except for the optional `stadiaconfig`
-passthrough. See [SECURITY.md](SECURITY.md).
+such as a hotspot you host. It never contacts Google itself, except for the `stadiaconfig`
+passthrough above. The controller still makes two requests to Google at boot, its
+connectivity check and its configuration, which the DNS sink forwards
+([docs/setup.md](docs/setup.md#network)). See [SECURITY.md](SECURITY.md).
 
 ## Legal
 

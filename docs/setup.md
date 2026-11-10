@@ -21,18 +21,23 @@ Every number above is a default of `tools/start_receiver.sh` and of `stadiacast`
 ## Network
 
 The only hard requirement is that **the controller resolves names through the receiver**.
-The firmware looks up `*.googleapis.com`, `clients3.google.com`, `connectivitycheck.gstatic.com`,
-`update.googleapis.com`, `play.googleapis.com` and `time.google.com`; the DNS sink answers the
-redirected names with the receiver's IP (A records; AAAA gets an empty answer so the firmware
-stays on IPv4) and forwards everything else to the real resolver (`--dns-upstream`).
+`--dns-upstream <resolver>` spawns the DNS sink: it answers `*.googleapis.com`,
+`googleapis.com` and `time.google.com` with the receiver's IP (A records; AAAA gets an empty
+answer so the firmware stays on IPv4) and forwards every other name to that resolver.
+`--dns-redirect` sets the names redirected besides the `googleapis.com` ones (comma
+separated, default `time.google.com`: keep it in the list when you add a name). The firmware's two other names,
+`connectivitycheck.gstatic.com` (its connectivity check, `/generate_204`) and
+`clients3.google.com` (its configuration, `stadiaconfig`), are forwarded like any other, so
+the controller still makes those two requests to Google at boot.
 
 Options, from simplest to most involved:
 
 - **Hotspot hosted by the receiver's machine** (the reference rig). The machine is the
   controller's DNS server automatically.
 - **Your existing Wi-Fi.** Make the router's DHCP hand out the receiver's IP as the DNS
-  server for the controller (a static lease / per-client DNS option), or for the whole LAN:
-  the DNS sink forwards every other name upstream, so the rest of the network keeps working.
+  server to the controller alone (a static lease or a per-client DNS option). Not to the whole
+  LAN: the sink answers every device alike, so the others would get `*.googleapis.com` and
+  `time.google.com` pointed at the receiver and their Google services would fail.
 - **Standalone DNS sink.** `python -m stadiacast.helpers.dns_sink --upstream <router>
   --redirect-ip <receiver> --log dns.jsonl` runs it without the receiver, for example on a
   different host.
@@ -47,7 +52,7 @@ Ports used by the receiver (all configurable):
 |---|---|---|
 | 53 TCP/UDP | DNS | the DNS sink (`--dns-upstream` spawns it) |
 | 123 UDP | SNTP | time for the controller (`--sntp`, on in the `live` preset) |
-| 443 TCP | HTTPS | every Google endpoint the firmware talks to |
+| 443 TCP | HTTPS | the Google endpoints the DNS sink redirects |
 | 80, 8008 TCP | HTTP | the local control endpoints `/_status`, `/_rumble`, `/_start_game`, `/_audio` |
 | 40000 UDP | STUN/DTLS | the display link of the first controller (`c0`) |
 | 40001 UDP | STUN/DTLS | the game-streaming session of the first controller |

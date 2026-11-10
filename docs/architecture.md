@@ -15,7 +15,7 @@ that has no interpreter to run `-m` with, the executable itself with `--helper <
 | process | module | why separate |
 |---|---|---|
 | the receiver | `stadiacast.cli` → `stadiacast.receiver` | HTTPS/HTTP listeners, every controller's UDP sockets, the event log |
-| DNS sink | `stadiacast.helpers.dns_sink` | binds port 53; answers the Google names with the receiver's IP, forwards everything else |
+| DNS sink | `stadiacast.helpers.dns_sink` | binds port 53; answers `*.googleapis.com` and the `--dns-redirect` names with the receiver's IP, forwards everything else |
 | SNTP server | `stadiacast.helpers.sntp_server` | binds port 123; answers `time.google.com` with the host clock |
 
 The helpers are plain blocking servers in their own processes so they keep answering while the
@@ -46,9 +46,10 @@ Receiver                                   one per process (receiver.py)
 ```
 
 **`Receiver`** owns what is shared and nothing that belongs to one controller. It routes HTTP
-requests (`_route`), answers the boot-time endpoints itself (connectivity check, `stadiaconfig`,
-Omaha, Clearcut) and hands everything that identifies a controller to that controller's session.
-It is also the registry: `controller_for()` finds or creates the session for a request.
+requests (`_route`), answers the boot-time endpoints itself (Omaha, Clearcut, and the
+connectivity check and `stadiaconfig` when their names are redirected to it, which the default
+DNS sink does not do) and hands everything that identifies a controller to that controller's
+session. It is also the registry: `controller_for()` finds or creates the session for a request.
 
 **`ControllerSession`** is one controller as the receiver sees it: the discovery RPCs
 (`register`, `discover`), the GMsg queue and long poll (`queue_gmsg`, `gmsg_poll`), the
