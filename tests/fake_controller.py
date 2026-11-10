@@ -142,7 +142,10 @@ class FakeController:
         self.wire_dropped = 0  # records the firmware's WireHeader2 check would drop
         # Headset audio arrives as RTP on the media pair, like the display's input ACKs; the
         # payload type tells them apart (the ACKs use --input-payload-type, 96 by default).
+        # audio_frames holds what the jack would play.  The controller takes and plays nothing of
+        # what comes before the route was opened or inside the 0x66 sub-channel: audio_unplayed.
         self.audio_frames: list[RtpPacket] = []
+        self.audio_unplayed = 0
         self.audio_payload_type = 111
         self.audio_route_open = False  # SetAudioModeRequest mode 2 was accepted in this boot
         self.headset_plugged = False  # GetControllerStateResponse.f4
@@ -191,7 +194,10 @@ class FakeController:
             self.log(f"[fake] dropped DTLS app record ({e}): {data[:16].hex()}")
             return
         if msg_id == WIRE_ID_RTP:
-            self._on_rtp(parse_rtp(payload))
+            try:
+                self._on_rtp(parse_rtp(payload), in_subchannel=True)
+            except ValueError as e:
+                self.log(f"[fake] 0x66 record that is not RTP ({e}): {payload[:16].hex()}")
         elif msg_id in WIRE_IDS_DC_RPC:
             if self.dc_state == "connecting":  # no read callback registered yet: dropped
                 self.early_rpc_records += 1
@@ -585,9 +591,12 @@ class FakeController:
         req.keepalive.SetInParent()
         return await self.rpc_call(req)
 
-    def _on_rtp(self, pkt):
+    def _on_rtp(self, pkt, in_subchannel: bool = False):
         if pkt.payload_type == self.audio_payload_type:
-            self.audio_frames.append(pkt)
+            if in_subchannel or not self.audio_route_open:
+                self.audio_unplayed += 1
+            else:
+                self.audio_frames.append(pkt)
             return
         self.rtp_in.put_nowait(pkt)
         try:

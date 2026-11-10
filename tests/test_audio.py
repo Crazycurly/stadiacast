@@ -176,6 +176,33 @@ def test_audio_reaches_the_controller(tmp_path) -> None:
     asyncio.run(run())
 
 
+def test_audio_the_controller_would_not_play_is_not_counted_as_heard(tmp_path) -> None:
+    """The jack plays what comes on the media pair after the mode request opened the route: not
+    what is sent before it, and not what is put into the 0x66 sub-channel."""
+
+    async def run() -> None:
+        rx = make_receiver(tmp_path, audio_mode=0)  # 0 leaves SetAudioMode out
+        await rx.start()
+        fc = await connect_firmware_flow(rx)
+        cs = single(rx)
+        try:
+            await wait_for(lambda: fc.dc_state == "ready", timeout=6)
+            await cs.audio_start(None)
+            cs.audio_feed(b"\xf8\x01", marker=True)
+            await wait_for(lambda: fc.audio_unplayed == 1)
+            assert cs.set_audio_mode(2, f3=True)["ok"]
+            assert cs.endpoint.send_rtp_wire(b"\xf8\x02", payload_type=111)  # the sub-channel: dropped
+            cs.audio_feed(b"\xf8\x03", marker=False)
+            await wait_for(lambda: len(fc.audio_frames) == 1 and fc.audio_unplayed == 2)
+            assert fc.audio_frames[0].payload == b"\xf8\x03"
+        finally:
+            await cs.audio_stop()
+            fc.close()
+            await rx.stop()
+
+    asyncio.run(run())
+
+
 def test_a_second_stream_in_one_boot_plays_although_the_controller_refuses_the_mode_request(tmp_path) -> None:
     """The controller opens the route to the jack once per boot: it answers the first
     SetAudioModeRequest OK and a repeat FAILED_PRECONDITION, and plays the frames either way."""
@@ -220,6 +247,7 @@ def test_ffmpeg_tone_comes_out_of_the_encoder(tmp_path) -> None:
         fc = await connect_firmware_flow(rx)
         cs = single(rx)
         try:
+            await wait_for(lambda: fc.dc_state == "ready", timeout=6)  # the mode request needs the RPC reader
             await cs.audio_start(Source.test_tone(duration=0.5))
             await wait_for(lambda: len(fc.audio_frames) >= 5, timeout=10)
             frames = fc.audio_frames[:5]
