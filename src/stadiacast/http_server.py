@@ -5,12 +5,18 @@ connections and occasionally chunked uploads.  Every request is handed to one as
 (the receiver's router) and logged by it; this module only does framing.  It also owns the TLS
 context: the SNI callback records the requested name per connection and, with
 ``--clearcut-block tls``, fails the handshake for the Clearcut host.
+
+Every listener is open to the whole network, so nothing a client does may hold the server: a
+request has ``idle_timeout`` seconds for its head and as long again for its body, a response as
+long to be taken, and the connections open at once are counted.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import email.utils
+import http
 import re
 import ssl
 import time
@@ -23,6 +29,7 @@ from urllib.parse import urlsplit
 from stadiacast import SERVER_NAME, __version__
 from stadiacast.config import CLEARCUT_HOSTS, Config
 from stadiacast.log import EventLog
+from stadiacast.netutil import bind_hint
 
 HTTP_REASONS = {
     200: "OK",
@@ -40,6 +47,32 @@ HTTP_REASONS = {
 MAX_HEAD_BYTES = 64 * 1024
 #: Longest request body we accept (the controller's bodies are a few KiB at most).
 MAX_BODY_BYTES = 4 * 1024 * 1024
+#: Connections served at once; a controller holds one or two.  Further ones are closed on
+#: arrival, which keeps a flood of them from using up the process's file descriptors.
+MAX_CONNECTIONS = 128
+#: The alerts a TLS client sends when it does not accept the server's certificate.
+CERTIFICATE_ALERTS = frozenset(
+    {
+        "BAD_CERTIFICATE",
+        "UNSUPPORTED_CERTIFICATE",
+        "CERTIFICATE_REVOKED",
+        "CERTIFICATE_EXPIRED",
+        "CERTIFICATE_UNKNOWN",
+        "UNKNOWN_CA",
+    }
+)
+
+
+def reason_phrase(status: int) -> str:
+    if status in HTTP_REASONS:
+        return HTTP_REASONS[status]
+    with contextlib.suppress(ValueError):
+        return http.HTTPStatus(status).phrase
+    return "Unknown"
+
+
+class BadChunkError(ValueError):
+    """A chunked body whose framing cannot be read."""
 
 
 class BodyTooLargeError(Exception):
@@ -102,6 +135,7 @@ class HttpServer:
         self.https_port: int | None = None
         self.http_ports: list[int] = []
         self._conn_seq = 0
+        self._open_conns = 0
 
     # ---- TLS -----------------------------------------------------------------------------
     def make_ssl_context(self) -> ssl.SSLContext:
@@ -110,7 +144,27 @@ class HttpServer:
         ctx.minimum_version = ssl.TLSVersion.TLSv1_2
         ctx.options |= ssl.OP_NO_COMPRESSION
         ctx.sni_callback = self._sni_cb
+        # asyncio reports a failed handshake nowhere, so the alert the client sends is read off the
+        # ssl module's message callback, a private hook: without it only this record is lost.
+        with contextlib.suppress(AttributeError):
+            ctx._msg_callback = self._tls_message_cb  # type: ignore[attr-defined]
         return ctx
+
+    def _tls_message_cb(
+        self, sslobj: Any, direction: str, _version: Any, content_type: Any, msg_type: Any, _data: bytes
+    ) -> None:
+        """Log an alert the client sent, other than the one that ends every connection."""
+        if direction != "read" or getattr(content_type, "name", None) != "ALERT":
+            return
+        alert = getattr(msg_type, "name", str(msg_type))
+        if alert == "CLOSE_NOTIFY":
+            return
+        self.log(
+            "tls_alert",
+            sni=getattr(sslobj, "_stadia_sni", None),
+            alert=alert,
+            note="the client does not accept the certificate" if alert in CERTIFICATE_ALERTS else None,
+        )
 
     def _sni_cb(self, sslobj: ssl.SSLObject, name: str | None, _ctx: ssl.SSLContext) -> int | None:
         # The stdlib offers no other way to read the SNI from the connection later: stash it on the object.
@@ -128,43 +182,40 @@ class HttpServer:
 
     # ---- lifecycle -----------------------------------------------------------------------
     async def start(self) -> None:
-        loop = asyncio.get_running_loop()
-        loop.set_exception_handler(self._loop_exception_handler)
         if self.cfg.https_port is not None:
             try:
-                srv = await self._listen(self.cfg.https_port, tls=True)
-            except OSError as e:
-                if self.cfg.https_port == 443:
-                    raise OSError(
-                        f"{e}; the controller connects to 443 only, so another program holding it stops the receiver"
-                    ) from e
-                raise
+                ctx = self.make_ssl_context()
+            except OSError as e:  # ssl.SSLError is one: a file that is not PEM, a key that is not the certificate's
+                raise OSError(f"cannot use the certificate {self.cfg.cert} with the key {self.cfg.key}: {e}") from e
+            # the controller connects to 443 only: without this listener there is no receiver
+            srv = await self._listen(self.cfg.https_port, ctx)
             self.https_port = srv.sockets[0].getsockname()[1]
             self.log("listening", proto="https", bind=self.cfg.bind, port=self.https_port)
         for p in self.cfg.http_ports:
             try:
-                srv = await self._listen(p, tls=False)
+                srv = await self._listen(p, None)
             except OSError as e:
-                # 80 and 8008 only carry the local control endpoints: a busy one must not stop the
-                # receiver, since 443 is the port the controller needs.
+                # 80 and 8008 only carry the local control endpoints: one that cannot be bound must
+                # not stop the receiver, since 443 is the port the controller needs.
                 self.log("port_busy", proto="http", port=p, error=str(e))
                 continue
             port = srv.sockets[0].getsockname()[1]
             self.http_ports.append(port)
             self.log("listening", proto="http", bind=self.cfg.bind, port=port)
 
-    async def _listen(self, port: int, *, tls: bool) -> asyncio.Server:
+    async def _listen(self, port: int, tls: ssl.SSLContext | None) -> asyncio.Server:
         try:
             srv = await asyncio.start_server(
-                lambda r, w: self._on_conn(r, w, tls),
+                lambda r, w: self._on_conn(r, w, tls is not None),
                 self.cfg.bind,
                 port,
-                ssl=self.make_ssl_context() if tls else None,
+                ssl=tls,
                 limit=MAX_HEAD_BYTES,
                 reuse_address=True,
             )
         except OSError as e:
-            raise OSError(f"cannot listen on {self.cfg.bind}:{port} ({'https' if tls else 'http'}): {e}") from e
+            proto = "https" if tls else "http"
+            raise OSError(f"cannot listen on {self.cfg.bind}:{port} ({proto}): {bind_hint(port, 'TCP', e)}") from e
         self.servers.append(srv)
         return srv
 
@@ -178,28 +229,29 @@ class HttpServer:
                 pass
         self.servers.clear()
 
-    def _loop_exception_handler(self, loop: asyncio.AbstractEventLoop, context: dict[str, Any]) -> None:
-        exc = context.get("exception")
-        msg = context.get("message", "")
-        if isinstance(exc, ssl.SSLError) or "handshake" in msg.lower():
-            transport = context.get("transport")
-            peer = transport.get_extra_info("peername") if transport else None
-            self.log(
-                "tls_handshake_failed",
-                peer=peer,
-                reason=getattr(exc, "reason", None),
-                detail=str(exc)[:200],
-                message=msg,
-                note="controller rejects our certificate" if "UNKNOWN_CA" in str(exc).upper() else None,
-            )
-            return
-        loop.default_exception_handler(context)
-
     # ---- connections ---------------------------------------------------------------------
     async def _on_conn(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, tls: bool) -> None:
         self._conn_seq += 1
         conn_id = f"c{self._conn_seq}"
         peer = writer.get_extra_info("peername")
+        if self._open_conns >= MAX_CONNECTIONS:
+            self.log("http_too_many_connections", conn=conn_id, peer=peer, open=self._open_conns)
+            writer.close()
+            return
+        self._open_conns += 1
+        try:
+            await self._serve_conn(reader, writer, tls, conn_id, peer)
+        finally:
+            self._open_conns -= 1
+
+    async def _serve_conn(
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+        tls: bool,
+        conn_id: str,
+        peer: tuple[str, int] | None,
+    ) -> None:
         sslobj = writer.get_extra_info("ssl_object") if tls else None
         sni = getattr(sslobj, "_stadia_sni", None) if sslobj else None
         tls_info = {"version": sslobj.version(), "cipher": sslobj.cipher()[0]} if sslobj else None
@@ -222,10 +274,15 @@ class HttpServer:
                     break
                 req = self._parse_head(head, peer, conn_id, tls_info, sni)
                 if req is None:
+                    self.log("http_bad_request", conn=conn_id, head=head[:200].decode("latin-1"))
                     await self._reject(writer, 400)
                     break
                 try:
-                    req.body = await self._read_body(reader, req)
+                    req.body = await asyncio.wait_for(self._read_body(reader, req), timeout=self.cfg.idle_timeout)
+                except BadChunkError as e:
+                    self.log("http_bad_chunk", conn=conn_id, error=str(e))
+                    await self._reject(writer, 400)
+                    break
                 except ValueError:
                     self.log("http_bad_content_length", conn=conn_id, value=req.header("content-length"))
                     await self._reject(writer, 400)
@@ -236,11 +293,13 @@ class HttpServer:
                     break
                 requests += 1
                 resp = await self.handler(req)
-                await self._write(writer, req, resp)
+                await asyncio.wait_for(self._write(writer, req, resp), timeout=self.cfg.idle_timeout)
                 if resp.close or req.wants_close():
                     break
         except (ConnectionResetError, BrokenPipeError, asyncio.IncompleteReadError):
             pass
+        except TimeoutError:  # a body that does not arrive, a response that is not taken
+            self.log("http_idle_timeout", conn=conn_id, requests=requests, stalled=True)
         except Exception as e:  # keep serving other connections
             self.log("http_conn_error", conn=conn_id, error=repr(e), tb=traceback.format_exc()[-800:])
         finally:
@@ -294,23 +353,25 @@ class HttpServer:
     @staticmethod
     async def _read_chunked(reader: asyncio.StreamReader) -> bytes:
         body = bytearray()
-        while True:
-            line = await reader.readuntil(b"\r\n")
-            size = int(line.split(b";")[0].strip() or b"0", 16)
-            if size == 0:
-                while True:  # trailers up to the empty line
-                    trailer = await reader.readuntil(b"\r\n")
-                    if trailer == b"\r\n":
-                        return bytes(body)
-            if len(body) + size > MAX_BODY_BYTES:
-                raise BodyTooLargeError(len(body) + size)
-            body += await reader.readexactly(size)
-            await reader.readexactly(2)
+        try:
+            while True:
+                line = await reader.readuntil(b"\r\n")
+                size = int(line.split(b";")[0].strip() or b"0", 16)
+                if size == 0:
+                    while await reader.readuntil(b"\r\n") != b"\r\n":  # trailers up to the empty line
+                        pass
+                    return bytes(body)
+                if len(body) + size > MAX_BODY_BYTES:
+                    raise BodyTooLargeError(len(body) + size)
+                body += await reader.readexactly(size)  # ValueError for a negative size
+                await reader.readexactly(2)
+        except (ValueError, asyncio.LimitOverrunError) as e:  # not a number, or a line longer than a head
+            raise BadChunkError(f"chunked framing that cannot be read ({e})") from e
 
     async def _reject(self, writer: asyncio.StreamWriter, status: int) -> None:
-        reason = HTTP_REASONS.get(status, "Error")
+        reason = reason_phrase(status)
         writer.write(f"HTTP/1.1 {status} {reason}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".encode("latin-1"))
-        await writer.drain()
+        await asyncio.wait_for(writer.drain(), timeout=self.cfg.idle_timeout)
 
     async def _write(self, writer: asyncio.StreamWriter, req: HttpRequest, resp: HttpResponse) -> None:
         close = resp.close or req.wants_close()
@@ -323,7 +384,10 @@ class HttpServer:
         headers += list(resp.headers)
         headers.append(("Content-Length", str(len(resp.body))))
         headers.append(("Connection", "close" if close else "keep-alive"))
-        reason = HTTP_REASONS.get(resp.status, "OK")
-        head = f"HTTP/1.1 {resp.status} {reason}\r\n" + "".join(f"{k}: {v}\r\n" for k, v in headers) + "\r\n"
+        head = (
+            f"HTTP/1.1 {resp.status} {reason_phrase(resp.status)}\r\n"
+            + "".join(f"{k}: {v}\r\n" for k, v in headers)
+            + "\r\n"
+        )
         writer.write(head.encode("latin-1") + resp.body)
         await writer.drain()
