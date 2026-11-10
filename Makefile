@@ -4,7 +4,7 @@
 UV ?= uv run --all-extras
 UVX ?= uvx
 
-.PHONY: help sync test coverage lint format typecheck schemas schemas-check build check start stop clean
+.PHONY: help sync test coverage lint format typecheck schemas schemas-check build exe check start stop clean
 
 help:            ## show this help
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-14s %s\n", $$1, $$2}'
