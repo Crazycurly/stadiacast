@@ -30,10 +30,19 @@ def qtype_name(t: int) -> str:
     return QTYPES.get(t, str(t))
 
 
-def parse_name(buf: bytes, off: int, _depth: int = 0) -> tuple[str, int]:
-    """Decode a (possibly compressed) domain name at ``off``; returns ``(name, offset after it)``."""
+#: RFC 1035's limits on a name: a label of 63 bytes, 255 bytes in all.  Without them a few
+#: compression pointers expand a small message into megabytes of names.
+MAX_LABEL = 63
+MAX_NAME = 255
+MAX_POINTERS = 10
+
+
+def parse_name(buf: bytes, off: int) -> tuple[str, int]:
+    """Decode a (possibly compressed) domain name at ``off``; returns ``(name, offset after it)``.
+    A name that breaks the limits above or runs past the message is a ``ValueError``."""
     labels: list[str] = []
-    jumped_end: int | None = None
+    after: int | None = None  # where the name ends in the message: behind its first pointer
+    size = pointers = 0
     while True:
         if off >= len(buf):
             raise ValueError("name runs past end")
@@ -42,18 +51,24 @@ def parse_name(buf: bytes, off: int, _depth: int = 0) -> tuple[str, int]:
             off += 1
             break
         if length & 0xC0 == 0xC0:
-            if _depth > 10:
+            pointers += 1
+            if pointers > MAX_POINTERS:
                 raise ValueError("compression loop")
-            ptr = ((length & 0x3F) << 8) | buf[off + 1]
-            if jumped_end is None:
-                jumped_end = off + 2
-            name, _ = parse_name(buf, ptr, _depth + 1)
-            labels.append(name)
-            return ".".join(label for label in labels if label), jumped_end
+            if off + 1 >= len(buf):
+                raise ValueError("name runs past end")
+            if after is None:
+                after = off + 2
+            off = ((length & 0x3F) << 8) | buf[off + 1]
+            continue
+        size += 1 + length
+        if length > MAX_LABEL or size > MAX_NAME:
+            raise ValueError("name too long")
         off += 1
+        if off + length > len(buf):
+            raise ValueError("name runs past end")
         labels.append(buf[off : off + length].decode("ascii", "replace"))
         off += length
-    return ".".join(labels), (jumped_end if jumped_end is not None else off)
+    return ".".join(labels), (after if after is not None else off)
 
 
 def parse_rr(buf: bytes, off: int) -> tuple[dict[str, Any], int]:
@@ -87,6 +102,32 @@ def parse_rr(buf: bytes, off: int) -> tuple[dict[str, Any], int]:
     return rr, off + rdlen
 
 
+def parse_question(buf: bytes, off: int) -> tuple[dict[str, Any], int]:
+    """Decode one question; returns ``(question, offset after it)``."""
+    name, off = parse_name(buf, off)
+    qtype, qclass = struct.unpack_from("!HH", buf, off)
+    question = {
+        "name": name,
+        "type": qtype_name(qtype),
+        "qtype": qtype,
+        "class": qclass & 0x7FFF,
+        "unicast_response": bool(qclass & 0x8000),
+    }
+    return question, off + 4
+
+
+def parse_query(buf: bytes) -> dict[str, Any]:
+    """The header and the first question of a query, which is all a server answers (a query has
+    one question, RFC 9619): whatever else a message claims to hold is not walked."""
+    ident, flags, qd = struct.unpack_from("!HHH", buf, 0)
+    return {
+        "id": ident,
+        "flags": flags,
+        "qr": bool(flags & 0x8000),
+        "questions": [parse_question(buf, 12)[0]] if qd else [],
+    }
+
+
 def parse_message(buf: bytes) -> dict[str, Any]:
     """Decode a whole DNS message into a dict (header flags, questions, answers, authority, additional)."""
     (ident, flags, qd, an, ns, ar) = struct.unpack_from("!HHHHHH", buf, 0)
@@ -102,18 +143,8 @@ def parse_message(buf: bytes) -> dict[str, Any]:
         "additional": [],
     }
     for _ in range(qd):
-        name, off = parse_name(buf, off)
-        qtype, qclass = struct.unpack_from("!HH", buf, off)
-        off += 4
-        msg["questions"].append(
-            {
-                "name": name,
-                "type": qtype_name(qtype),
-                "qtype": qtype,
-                "class": qclass & 0x7FFF,
-                "unicast_response": bool(qclass & 0x8000),
-            }
-        )
+        question, off = parse_question(buf, off)
+        msg["questions"].append(question)
     for section, count in (("answers", an), ("authority", ns), ("additional", ar)):
         for _ in range(count):
             rr, off = parse_rr(buf, off)

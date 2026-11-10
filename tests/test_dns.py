@@ -5,6 +5,7 @@ from __future__ import annotations
 import socket
 import struct
 import threading
+import time
 from collections.abc import Iterator
 
 import pytest
@@ -60,8 +61,42 @@ def test_parse_message_decodes_every_record_type_the_sink_logs():
 def test_parse_name_rejects_truncated_names_and_pointer_loops():
     with pytest.raises(ValueError, match="past end"):
         dnswire.parse_name(b"\x05abc", 0)
+    with pytest.raises(ValueError, match="past end"):
+        dnswire.parse_name(b"\x03abc\xc0", 0)  # a pointer cut in half
     with pytest.raises(ValueError, match="compression loop"):
         dnswire.parse_name(b"\xc0\x00", 0)
+
+
+def test_parse_name_keeps_to_the_limits_of_a_name():
+    longest_label = b"\x3f" + b"a" * 63
+    assert dnswire.parse_name(longest_label + b"\x00", 0) == ("a" * 63, 65)
+    with pytest.raises(ValueError, match="too long"):
+        dnswire.parse_name(b"\x40" + b"a" * 64 + b"\x00", 0)  # 0x40 and 0x80 are not lengths
+    assert len(dnswire.parse_name(longest_label * 3 + b"\x3d" + b"a" * 61 + b"\x00", 0)[0]) == 253
+    with pytest.raises(ValueError, match="too long"):
+        dnswire.parse_name(longest_label * 4 + b"\x00", 0)
+    # a name that stays under the limit only because it is written with pointers is over it too
+    chained = longest_label * 2 + b"\x00" + longest_label * 2 + b"\xc0\x00"
+    with pytest.raises(ValueError, match="too long"):
+        dnswire.parse_name(chained, 129)
+
+
+def test_a_small_message_cannot_be_expanded_into_megabytes_of_names(tmp_path):
+    """Thousands of questions that each point at one long name: only the first question is read,
+    which is all a query has, so the message costs what a real one does."""
+    resolver, log = make_resolver(tmp_path, 1, log_only=False, nxdomain=["a*"])
+    long_name = (b"\x3f" + b"a" * 63) * 3 + b"\x00"
+    count = 10_000
+    message = struct.pack("!HHHHHH", 7, 0x0100, count, 0, 0, 0) + long_name + struct.pack("!HH", 1, 1)
+    message += (b"\xc0\x0c" + struct.pack("!HH", 1, 1)) * (count - 1)
+    assert len(message) < 65536  # what a TCP query can carry
+    started = time.perf_counter()
+    answer = resolver.handle(message, ("192.168.2.9", 5353), "tcp")
+    assert time.perf_counter() - started < 0.2
+    assert answer is not None and answer[3] & 0x0F == dnswire.RCODE_NXDOMAIN  # answered from its first question
+    assert [r["qname"] for r in log.records if r["event"] == "query"] == [".".join(["a" * 63] * 3)]
+    with pytest.raises(ValueError, match="too long"):  # the whole message, as the log reads an answer
+        dnswire.parse_message(message.replace(b"\x3f" + b"a" * 63, b"\x40" + b"a" * 64, 1))
 
 
 def test_build_responses():
@@ -174,7 +209,25 @@ def test_unreachable_upstream_gets_servfail_not_a_crash(tmp_path):
 
 def test_garbage_gets_formerr(tmp_path):
     resolver, log = make_resolver(tmp_path, 1)
-    resp = resolver.handle(b"\x00\x01nope", ("192.168.2.2", 5353), "udp")
-    assert resp[:2] == b"\x00\x01"
+    header = struct.pack("!HHHHHH", 1, 0x0100, 1, 0, 0, 0)
+    resp = resolver.handle(header + b"\x05nope", ("192.168.2.2", 5353), "udp")  # a name that runs past the end
+    assert resp is not None and resp[:2] == b"\x00\x01"
     assert resp[3] & 0x0F == dnswire.RCODE_FORMERR
     assert [r["event"] for r in log.records] == ["query_unparsable"]
+
+
+@pytest.mark.parametrize(
+    ("message", "reason"),
+    [
+        (b"\x00\x01nope", "too short"),
+        (dnswire.build_a_response(query("cloudcast-pa.googleapis.com"), "192.168.2.1"), "a response"),
+        (dnswire.build_rcode_response(query("example.com"), dnswire.RCODE_SERVFAIL), "a response"),
+    ],
+)
+def test_what_is_not_a_query_gets_no_answer(tmp_path, upstream, message, reason):
+    """Answering an answer would have two such servers send to each other for good."""
+    port, seen = upstream
+    resolver, log = make_resolver(tmp_path, port)
+    assert resolver.handle(message, ("192.168.2.9", 53), "udp") is None
+    assert [(r["event"], r["reason"]) for r in log.records] == [("query_ignored", reason)]
+    assert seen == []

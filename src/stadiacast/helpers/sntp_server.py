@@ -23,6 +23,7 @@ from stadiacast.netutil import bind_hint
 
 NTP_EPOCH_OFFSET = 2208988800  # 1900-01-01 -> 1970-01-01
 NTP_PACKET_LEN = 48
+MODE_CLIENT = 3  # the one mode a server answers: a reply to a reply would never end
 
 
 def ntp_timestamp(t: float) -> bytes:
@@ -87,6 +88,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             t = time.time()
             if len(data) < NTP_PACKET_LEN:
                 log("short_request", src=f"{addr[0]}:{addr[1]}", len=len(data), hex=data.hex())
+                continue
+            if data[0] & 7 != MODE_CLIENT:
+                log("not_a_request", src=f"{addr[0]}:{addr[1]}", mode=data[0] & 7)
                 continue
             reply = build_reply(data, t)
             try:

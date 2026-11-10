@@ -1,8 +1,8 @@
 """Logging DNS server that answers selected names with this host's IP and forwards everything else.
 
-Point the controller (or the whole hotspot) at it: the Google names the receiver stands in for
-resolve to the receiver, every other name is forwarded to the real upstream resolver and the
-answer relayed, so the LAN keeps working.
+Point the controller at it: the Google names the receiver stands in for resolve to the receiver,
+every other name is forwarded to the real upstream resolver and the answer relayed.  The redirect
+is for whoever asks, so a device that needs the real Google services keeps its own resolver.
 
     python -m stadiacast.helpers.dns_sink --upstream 192.168.1.1 --log captures/x/dns.jsonl \\
         --redirect '*.googleapis.com' --redirect googleapis.com
@@ -37,6 +37,7 @@ from stadiacast.helpers.dnswire import (
     build_a_response,
     build_rcode_response,
     parse_message,
+    parse_query,
 )
 from stadiacast.log import EventLog
 from stadiacast.netutil import bind_hint, local_ip_towards
@@ -93,17 +94,22 @@ class Resolver:
         finally:
             s.close()
 
-    def handle(self, query: bytes, src: tuple[str, int], proto: str) -> bytes:
+    def handle(self, query: bytes, src: tuple[str, int], proto: str) -> bytes | None:
+        """The answer to send, or None for what gets none: a message too short to be DNS, and a
+        response (answering those would have two servers send to each other for good)."""
         t0 = time.time()
         rec: dict[str, Any] = {
             "proto": proto,
             "src": f"{src[0]}:{src[1]}",
             "from_controller": src[0] == self.controller_ip,
         }
+        if len(query) < 12 or query[2] & 0x80:
+            self.log("query_ignored", reason="a response" if len(query) >= 12 else "too short", len=len(query), **rec)
+            return None
         try:
-            msg = parse_message(query)
+            msg = parse_query(query)
         except Exception as e:  # anything that is not a DNS message
-            self.log("query_unparsable", error=str(e), raw_hex=query.hex(), **rec)
+            self.log("query_unparsable", error=str(e), raw_hex=query[:512].hex(), **rec)
             return build_rcode_response(query, RCODE_FORMERR)
         q: dict[str, Any] = msg["questions"][0] if msg["questions"] else {"name": "?", "type": "?", "qtype": 0}
         rec.update(id=msg["id"], qname=q["name"], qtype=q["type"])
@@ -140,7 +146,8 @@ class _UdpHandler(socketserver.BaseRequestHandler):
     def handle(self) -> None:
         data, sock = self.request
         resp = self.server.resolver.handle(data, self.client_address, "udp")  # type: ignore[attr-defined]
-        sock.sendto(resp, self.client_address)
+        if resp is not None:
+            sock.sendto(resp, self.client_address)
 
 
 class _TcpHandler(socketserver.BaseRequestHandler):
@@ -158,7 +165,8 @@ class _TcpHandler(socketserver.BaseRequestHandler):
                     return
                 data += chunk
             resp = self.server.resolver.handle(data, self.client_address, "tcp")  # type: ignore[attr-defined]
-            self.request.sendall(struct.pack("!H", len(resp)) + resp)
+            if resp is not None:
+                self.request.sendall(struct.pack("!H", len(resp)) + resp)
         except OSError:
             pass
 
