@@ -7,12 +7,18 @@ it does.
 
 ## Setting up
 
+The workflow runs on [uv](https://docs.astral.sh/uv/), `make check` included:
+
 ```sh
 git clone https://github.com/jkfran/stadiacast.git
 cd stadiacast
-uv sync --all-extras          # or: python3 -m venv .venv && . .venv/bin/activate && pip install -e ".[ble,passthrough,audio,gamepad]" --group dev
+uv sync --all-extras          # .venv with the receiver, every extra and the dev tools
 uvx pre-commit install        # optional: ruff, shellcheck and a private-key check on every commit
 ```
+
+On Windows, set `VGAMEPAD_SKIP_VIGEMBUS_INSTALL=true` before the `uv sync`
+(`$env:VGAMEPAD_SKIP_VIGEMBUS_INSTALL = "true"` in PowerShell): installing the `gamepad` extra
+otherwise launches the ViGEmBus driver's installer.
 
 `make help` lists the day-to-day commands. Before you push:
 
@@ -21,8 +27,10 @@ make check        # ruff check + ruff format --check + shellcheck + mypy + schem
 make coverage     # the suite with a line and branch coverage report
 ```
 
-CI runs the same on Linux and macOS with Python 3.11 to 3.14; the manual Windows lab workflow runs
-the suite, the Windows-only drivers and the Windows executables on a Windows runner.
+CI runs the same on Linux and macOS with Python 3.11 to 3.14, and the tests once more with
+every direct dependency at the lowest version `pyproject.toml` allows; the manual Windows lab
+workflow runs the suite, the Windows-only drivers and the Windows executables on a Windows
+runner.
 
 ## Tests
 
@@ -125,5 +133,3 @@ through [SECURITY.md](SECURITY.md), not the public tracker.
    existing release by hand.
 4. `make exe` builds the executables for the current platform into `dist/`, for a check before
    tagging; `gh workflow run release.yml` builds all three as workflow artifacts without a tag.
-   On Windows, set `VGAMEPAD_SKIP_VIGEMBUS_INSTALL=true` first: installing the `gamepad` extra
-   otherwise launches the ViGEmBus driver's installer on the build machine.
