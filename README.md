@@ -16,8 +16,8 @@ network that stands in for those endpoints, so the controller you own keeps work
 own PC: it joins your Wi-Fi, connects, stays on, reports every button, stick and trigger,
 vibrates on request and plays sound on its headset jack.
 
-> **Status:** works end to end on the controller's last Wi-Fi firmware, `ota.282115`, with
-> several controllers at once. Expect rough edges. Questions go to
+> **Status:** works end to end with controllers running their Wi-Fi firmware (tested with
+> `ota.282115`), several at once. Expect rough edges. Questions go to
 > [Discussions](https://github.com/jkfran/stadiacast/discussions), bugs to the
 > [issues](https://github.com/jkfran/stadiacast/issues); pull requests are very welcome.
 > Switched your controller to Bluetooth mode? It comes back, see [Requirements](#requirements).
@@ -106,10 +106,9 @@ stadiacast --preset live --dns-upstream 192.168.1.1   # your router: the DNS sin
 
 ## Requirements
 
-- A Stadia Controller on its Wi-Fi firmware (tested with `ota.282115`, the last Wi-Fi build).
-  A controller switched to Bluetooth mode accepts older Google-signed images, so the
-  community's flashing tools put the Wi-Fi firmware back. Stadiacast itself never flashes
-  anything.
+- A Stadia Controller running its Wi-Fi firmware (tested with `ota.282115`). A controller
+  switched to Bluetooth mode can be flashed back with community tools; Stadiacast itself never
+  flashes anything.
 - A Windows, macOS or Linux computer on the controller's network, acting as its DNS server.
   The reference rig is a macOS Internet Sharing hotspot. On Linux, binding ports 53, 80, 123
   and 443 needs root or `CAP_NET_BIND_SERVICE`; on Windows the firewall may have to let the
@@ -181,8 +180,8 @@ libportaudio2`). On macOS, send the sound to a virtual output such as BlackHole
 volume keys do not act on it, so set the loudness in the app or with `--audio-volume`. On
 Windows the default output's loopback is captured and the volume slider and mute reach the
 headset (`--audio-follow-volume off` sends the raw mix). On Linux the default output's
-PulseAudio monitor is read, untested on a real machine. How the stream rides the display link
-is in [docs/protocol.md](docs/protocol.md#audio-to-the-headset-jack).
+PulseAudio monitor is read. How the stream rides the display link is in
+[docs/protocol.md](docs/protocol.md#audio-to-the-headset-jack).
 
 ## Virtual gamepad (Windows)
 

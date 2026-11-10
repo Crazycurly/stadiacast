@@ -49,6 +49,9 @@ address's queries. When that picks the wrong interface, `--advertise-ip` sets th
 DNS sink answers with and the WebRTC answers carry. `tools/start_receiver.sh` reads both from
 `.env` (`CONTROLLER_IP`, `ADVERTISE_IP`).
 
+The controller's Wi-Fi speaks WPA2 only: give the network it joins WPA2-Personal (AES) with
+protected management frames off, not WPA3.
+
 Caveat: when a redirected name gets NXDOMAIN the firmware falls back to `8.8.8.8` and reaches
 the real host through the NAT, which is why `--clearcut-block tls` (fail the TLS handshake)
 is preferred over `--clearcut-block dns` (see [protocol.md](protocol.md#7-clearcut-and-the-power-off)).
@@ -76,8 +79,6 @@ On Windows, when the controller sits on another subnet than the PC (a dedicated 
 routed to it), Windows Defender Firewall drops the inbound traffic by default: allow UDP 53,
 TCP 443 and the UDP range of the WebRTC ports (40000 and up, two per controller). A blocked
 game port shows as a steady white controller whose StartGame fails after a few seconds.
-Users also report that the controller's Wi-Fi chip speaks WPA2 only: give the network it joins
-WPA2-Personal (AES) with protected management frames off, not WPA3.
 
 ## Certificate
 
