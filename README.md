@@ -58,21 +58,22 @@ stadiacast --preset live --dns-upstream 192.168.1.1   # your router: the DNS sin
 
 3. **Start the receiver** with the command above; on Windows add `--gamepad vigem` for the
    [virtual gamepad](#virtual-gamepad-windows). From a source checkout,
-   `tools/start_receiver.sh` does the same with the settings in `.env.example` and writes a
-   run directory under `captures/`.
+   `tools/start_receiver.sh` does the same in the background, with the settings of a `.env`
+   file (see `.env.example`).
 4. **Wake the controller** with a ~1 s press of the Stadia button, released at the first
    vibration. Two short rumbles and a steady light mean it found the receiver; a blinking
    light with no rumble is a short "report wake", so press again.
-5. **Watch the input.** The console shows one line per report, `stadiacast-show-input
-   captures/<stamp>` summarizes a run, and `GET http://<receiver>/_status` shows the session
-   state, the battery level and whether a headset is plugged in.
+5. **Watch the input.** The console shows one line per report,
+   `GET http://<receiver>/_status` shows the session state, the battery level and whether a
+   headset is plugged in, and with an install from PyPI or from source
+   `stadiacast-show-input captures/<stamp>` summarizes a run.
 6. **Rumble.** Start with `--start-game`, since the game session is the only path to the
    motors, then post levels from 0 to 65535:
 
    ```sh
-   curl -d '{"left":40000,"right":40000,"ms":1500}' http://192.168.2.1/_rumble   # pulse
-   curl -d '{"left":65535,"right":20000}' http://192.168.2.1/_rumble              # hold
-   curl -d '{"left":0,"right":0}' http://192.168.2.1/_rumble                     # stop
+   curl -d '{"left":40000,"right":40000,"ms":1500}' http://<receiver>/_rumble   # pulse
+   curl -d '{"left":65535,"right":20000}' http://<receiver>/_rumble              # hold
+   curl -d '{"left":0,"right":0}' http://<receiver>/_rumble                     # stop
    ```
 
 7. **More controllers** each get their own session, `c0`, `c1`, ... in the log and in
@@ -112,18 +113,20 @@ stadiacast --preset live --dns-upstream 192.168.1.1   # your router: the DNS sin
   and 443 needs root or `CAP_NET_BIND_SERVICE`; on Windows the firewall may have to let the
   controller in ([docs/setup.md](docs/setup.md#network)).
 - Nothing else for the basics: the receiver ships a certificate the controller accepts
-  ([serving your own](docs/setup.md#certificate) is optional), and Python 3.11 or newer is
-  only needed to install from source.
+  ([serving your own](docs/setup.md#certificate) is optional), and the executables include
+  Python. An install from PyPI or from source needs Python 3.11 or newer.
 - Optional: ffmpeg for [headset audio](#headset-audio), the ViGEmBus driver for the
   [virtual gamepad](#virtual-gamepad-windows) on Windows, `tcpdump` for packet captures.
 
 ## Install
 
 **Executables.** Every [release](https://github.com/jkfran/stadiacast/releases) carries an
-archive for Windows x86_64, macOS (Apple silicon) and Linux x86_64, with `stadiacast` and
-`stadiacast-provision` as single files, Python included. Unpack it and run `stadiacast` from a
-terminal. The builds are not signed: macOS asks you to allow the program once (right-click,
-Open, or `xattr -d com.apple.quarantine stadiacast`) and Windows SmartScreen may warn.
+archive for Windows x86_64, macOS (Apple silicon) and Linux x86_64 with two programs,
+`stadiacast` and `stadiacast-provision`, as single files, Python included. Unpack it and run
+`stadiacast` from a terminal. The builds are not signed: macOS blocks each program at its
+first start until you allow it in System Settings → Privacy & Security → Open Anyway, or
+clear the quarantine flag of both with
+`xattr -d com.apple.quarantine stadiacast stadiacast-provision`; Windows SmartScreen may warn.
 
 **From PyPI**, with Python 3.11 or newer: `pip install 'stadiacast[ble,audio,gamepad]'` (or
 `uv tool install 'stadiacast[ble,audio,gamepad]'`); the extras are optional, see below.
@@ -136,13 +139,13 @@ cd stadiacast
 uv sync --all-extras
 ```
 
-or with pip, `pip install -e ".[ble,passthrough,audio,gamepad]"`. Every route installs
-`stadiacast`, `stadiacast-provision` and `stadiacast-show-input`; the `ble` extra is the
-Bluetooth provisioning, `audio` and `gamepad` are the [headset audio](#headset-audio)
-capture and the [virtual gamepad](#virtual-gamepad-windows), and `passthrough` lets the
-receiver fetch the controller's configuration (`stadiaconfig`) from Google for it, which only
-happens when `clients3.google.com` is redirected to the receiver (not by default). The scripts
-under `tools/` find the virtualenv on their own.
+or with pip, `pip install -e ".[ble,passthrough,audio,gamepad]"`. An install from PyPI or
+from source has a third command, `stadiacast-show-input`. The `ble` extra is the Bluetooth
+provisioning, `audio` and `gamepad` are the [headset audio](#headset-audio) capture and the
+[virtual gamepad](#virtual-gamepad-windows), and `passthrough` lets the receiver fetch the
+controller's configuration (`stadiaconfig`) from Google for it, which only happens when
+`clients3.google.com` is redirected to the receiver (not by default). The scripts under
+`tools/` find the virtualenv on their own.
 
 ## Input
 
@@ -194,8 +197,9 @@ needs one extra install, once and with an admin prompt: the
 DS4Windows, Sunshine and the other tools of this kind. Its author archived the project in 2023
 and 1.22.0 is the final version; it still installs and works on current Windows 10 and 11. It
 has to be desktop Windows, since Windows Server lacks the Xbox 360 controller driver the pad
-binds to. Without the driver, the receiver stops at start-up with one line that says so; from
-source, installing the `gamepad` extra offers to run the driver's installer.
+binds to. Without the driver, the receiver stops at start-up with one line that says so;
+installing the `gamepad` extra, from PyPI or from source, offers to run the driver's
+installer.
 
 Every report reaches the pad as XInput fields with the standard stick deadzones
 (`--gamepad-deadzone off` for raw sticks); the Stadia button is the guide button, Assistant
