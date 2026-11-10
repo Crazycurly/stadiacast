@@ -222,10 +222,11 @@ Events worth knowing when something does not work:
 
 ## Wi-Fi provisioning over Bluetooth
 
-A controller that has never been set up (or was factory reset) advertises a Bluetooth LE
-setup service and waits for Wi-Fi credentials: its status light blinks orange. If it does
-not, hold the Options (⋯) and Google Assistant buttons together until it does.
-`stadiacast-provision` then sends the credentials the way the Stadia app did:
+A controller that has never been set up advertises a Bluetooth LE setup service and waits for
+Wi-Fi credentials: its status light blinks orange. To put one that is already set up back into
+setup mode, turn it off (hold the Stadia button until the light goes out), then hold Y and
+press the Stadia button. `stadiacast-provision` then sends the credentials the way the Stadia
+app did:
 
 ```sh
 stadiacast-provision scan                                 # find the controller (Fast Pair 0xFE2C)
