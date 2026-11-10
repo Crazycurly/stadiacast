@@ -415,6 +415,7 @@ class GameSession:
         shows up: 0x66 "streamer-input" (input out, feedback in) and the RPC channel (0xFFFA;
         0x74/0x75 also routed).
         """
+        self.ctl.seen()
         g = self.state
         try:
             msg_id, payload = parse_wire_message(data, strict_id=False)
@@ -461,6 +462,7 @@ class GameSession:
 
     def _on_rtp(self, pkt: RtpPacket) -> None:
         """SRTP on the game session's UDP flow (if the session does not use raw DTLS)."""
+        self.ctl.seen()
         self._on_input(pkt.payload, "srtp", pkt)
 
     def _on_input(self, payload: bytes, framing: str, pkt: RtpPacket | None = None) -> None:

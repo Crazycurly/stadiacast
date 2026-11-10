@@ -380,3 +380,40 @@ def test_a_client_hello_that_arrives_after_the_receiver_began_its_own_handshake_
             await rx.stop()
 
     asyncio.run(run())
+
+
+def test_a_controller_that_powers_off_is_let_go_and_its_next_boot_connects(tmp_path):
+    """The controller closes the display link when it is switched off.  From then on the receiver
+    sends it nothing: no receiver reports, no connectivity checks, no headset stream."""
+
+    async def run():
+        rx = make_receiver(tmp_path, display_rpc_delay=0.05, rtcp_interval=0.05, ice_fast_checks=0.05)
+        await rx.start()
+        fc = await connect_firmware_flow(rx, device_id="fake-a", cloud_device_id="cloud-fake-a")
+        fc2 = None
+        try:
+            ctl = single(rx)
+            await asyncio.wait_for(fc.display_ready.wait(), 5)
+            assert (await fc.keepalive())["code"] == 0 and ctl.display_state == "ready"
+            await ctl.audio_start(None)
+            await wait_for(lambda: ctl.endpoint.stats["rtcp_out"] > 2)
+            fc.power_off()
+            await wait_for(lambda: ctl.session["state"] == "dtls-closed")
+            assert (ctl.display_state, ctl.audio_state()) == ("idle", {"playing": False})
+            assert ctl._rtcp_task is None and ctl.endpoint.remote is None and ctl.endpoint._keepalive_handle is None
+            sent = dict(ctl.endpoint.stats)
+            await asyncio.sleep(0.3)  # six receiver reports and six checks, before
+            assert dict(ctl.endpoint.stats) == sent
+            assert [r["reason"] for r in rx.log.records if r["event"] == "boot_state_reset"] == [
+                "the controller closed the link"
+            ]
+            fc2 = await connect_firmware_flow(rx, device_id="fake-a", cloud_device_id="cloud-fake-a")
+            await asyncio.wait_for(fc2.display_ready.wait(), 5)
+            assert single(rx) is ctl and (await fc2.keepalive())["code"] == 0 and ctl.display_state == "ready"
+        finally:
+            fc.close()
+            if fc2 is not None:
+                fc2.close()
+            await rx.stop()
+
+    asyncio.run(run())

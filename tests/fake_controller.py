@@ -946,6 +946,15 @@ class FakeController:
     async def wait_ack(self, timeout: float = 3.0) -> int:
         return await asyncio.wait_for(self.acks.get(), timeout)
 
+    def power_off(self) -> None:
+        """What a controller does when it is switched off: it closes the display link with a DTLS
+        alert, then goes silent."""
+        dtls = self.endpoint.dtls
+        if dtls is not None and dtls.handshake_complete:
+            dtls.conn.shutdown()
+            self.endpoint._send_dtls(dtls._drain())
+        self.close()
+
     def close(self) -> None:
         for task in (self._on_connected_task, self._game_task):
             if task is not None:

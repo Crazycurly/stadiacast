@@ -8,7 +8,7 @@ import random
 import socket
 
 from stadiacast import receiver as receiver_module
-from tests.helpers import fake, make_receiver, wait_for
+from tests.helpers import connect_firmware_flow, fake, make_receiver, wait_for
 
 
 def free_udp_ports(count: int) -> int:
@@ -240,6 +240,31 @@ def test_a_udp_port_taken_by_another_program_is_tried_again_at_the_next_request(
         finally:
             other_program.close()
             fc.close()
+            await rx.stop()
+
+    asyncio.run(run())
+
+
+def test_the_controller_that_plays_is_not_the_one_that_makes_room(tmp_path, monkeypatch):
+    """A controller that plays sends nothing over HTTP after its boot.  Its traffic on the link
+    counts as seen, so the session forgotten for a new controller is one that is really idle."""
+    monkeypatch.setattr(receiver_module, "MAX_CONTROLLERS", 2)
+
+    async def run():
+        rx = make_receiver(tmp_path, display_rpc_delay=0.05)
+        await rx.start()
+        playing = await connect_firmware_flow(rx, device_id="fake-a", cloud_device_id="cloud-fake-a")
+        idle, newcomer = fake(rx, "fake-b"), fake(rx, "fake-c")
+        try:
+            await asyncio.wait_for(playing.display_ready.wait(), 5)
+            await idle.boot()  # seen over HTTP after the playing one's last request
+            assert (await playing.keepalive())["code"] == 0  # the playing one goes on, over UDP
+            await newcomer.boot()
+            assert rx.find("fake-a") is not None and rx.find("fake-b") is None and rx.find("fake-c") is not None
+            assert (await playing.keepalive())["code"] == 0
+        finally:
+            for f in (playing, idle, newcomer):
+                f.close()
             await rx.stop()
 
     asyncio.run(run())

@@ -163,6 +163,11 @@ class ControllerSession:
     def now(self) -> float:
         return self.rx.now()
 
+    def seen(self) -> None:
+        """Note traffic on one of its links.  A controller that plays sends nothing over HTTP, and
+        the session idle the longest is the one that makes room for a new controller."""
+        self.last_seen = time.monotonic()
+
     def touch(self, ip: str | None, device_id: str | None = None, serial: str | None = None) -> None:
         """Note a sighting: the address it came from and any identifier it carried."""
         self.last_seen = time.monotonic()
@@ -194,12 +199,13 @@ class ControllerSession:
         await self.endpoint.wait_closed()
         await self.game.endpoint.wait_closed()
 
-    def reset_boot_state(self) -> None:
+    def reset_boot_state(self, reason: str = "new offer") -> None:
         """A new offer from this controller = a new boot: per-boot timestamps and the post-DTLS tasks start over.
 
         Otherwise a second full boot inherits the first boot's dtls-connected time:
         ``--gmsg-ack-release`` then answers the new ACK poll at once (the controller powers off
-        immediately) and the display RPC trigger never fires.
+        immediately) and the display RPC trigger never fires.  The same reset runs when the
+        controller closes the link (:meth:`_on_rtc_state`).
         """
         if self._dtls_at is None and self._resolved_at is None and self._display_task is None:
             return
@@ -209,7 +215,10 @@ class ControllerSession:
                 task.cancel()
             setattr(self, name, None)
         self.log(
-            "boot_state_reset", previous_dtls=self._dtls_at is not None, previous_resolve=self._resolved_at is not None
+            "boot_state_reset",
+            reason=reason,
+            previous_dtls=self._dtls_at is not None,
+            previous_resolve=self._resolved_at is not None,
         )
         self._dtls_at = None
         self._resolved_at = None
@@ -646,6 +655,13 @@ class ControllerSession:
     def _on_rtc_state(self, state: str, info: dict[str, Any]) -> None:
         self.session["state"] = state
         self.session["rtc"] = info
+        if state == "dtls-closed":
+            # The controller closed the link: it is powering off.  Its next boot starts from a new
+            # offer, so what that offer would reset is reset now, and nothing goes on reporting to,
+            # streaming to or checking an address the controller has left.
+            self.reset_boot_state("the controller closed the link")
+            self.endpoint.clear_remote()
+            return
         if state == "dtls-connected" and self.cfg.rtcp_interval > 0 and self._rtcp_task is None:
             self._rtcp_task = asyncio.get_running_loop().create_task(self._rtcp_loop())
         if state == "dtls-connected" and self._dtls_at is None:
@@ -682,6 +698,7 @@ class ControllerSession:
     def _on_rtp(self, pkt: RtpPacket, via: str = "srtp") -> None:
         """Input RTP, either SRTP on the UDP wire or (raw_dtls) a plain RTP packet on WireHeader2
         sub-channel 0x66; the ack goes back the same way."""
+        self.seen()
         self.session["input_payload_type"] = pkt.payload_type
         try:
             decoded = self.input.decode(pkt.payload)
@@ -725,6 +742,7 @@ class ControllerSession:
         On the display link the controller frames its RpcMessages with id 0x74 (0x75 from the
         other side); 0x66 RTP is kept for the legacy fake-controller path.
         """
+        self.seen()
         try:
             msg_id, payload = parse_wire_message(data)
         except ValueError as e:
