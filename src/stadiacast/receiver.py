@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import html
 import json
 import os
 import re
@@ -40,6 +41,15 @@ from stadiacast.virtual_gamepad import VirtualGamepads
 
 #: Sessions kept at once; beyond this the least recently seen controller is forgotten.
 MAX_CONTROLLERS = 8
+#: Decoded input events kept for :meth:`Receiver.wait_event`; the oldest go first.
+EVENTS_KEPT = 1000
+#: How much of a request body is decoded into its ``http_request`` record; the whole body is in
+#: the run directory.  The controller's bodies are a few KiB.
+LOGGED_BODY_BYTES = 16 * 1024
+#: How much of an Omaha request is searched for its apps (a real one is under 2 KiB), and how
+#: many of them are answered.
+OMAHA_REQUEST_BYTES = 16 * 1024
+OMAHA_APPS = 16
 
 RPC_PATH = re.compile(r"^/v1:([A-Za-z0-9_]+)$")
 
@@ -95,7 +105,7 @@ class Receiver:
 
     # ---- lifecycle -----------------------------------------------------------------------
     async def start(self) -> None:
-        self.events = asyncio.Queue()
+        self.events = asyncio.Queue(maxsize=EVENTS_KEPT)
         ensure_certificate(self.cfg, self.log)
         if self.cfg.gamepad != "off" and self.gamepads is None:
             self.gamepads = VirtualGamepads.create(self.cfg, self.log, self)
@@ -398,11 +408,12 @@ class Receiver:
             rec["controller"] = known.label
         if req.body:
             rec["body_hex"] = req.body[:2048].hex()
-            text = printable(req.body)
+            head = req.body[:LOGGED_BODY_BYTES]
+            text = printable(head)
             if text is not None:
                 rec["body_text"] = text[:4096]
             else:
-                rec["decoded"] = decode_unknown(req.body)
+                rec["decoded"] = decode_unknown(head)
         if resp.body:
             rec["response_hex"] = resp.body[:1024].hex()
         if resp.note:
@@ -426,6 +437,10 @@ class Receiver:
 
     async def _route(self, req: HttpRequest) -> HttpResponse:
         host, path = req.host.lower(), req.path
+        if path.startswith("/_") and req.method != "GET" and req.header("origin") is not None:
+            # A browser names the page a request comes from.  The control endpoints have no login,
+            # so a page on any site could otherwise move the motors or start a stream.
+            return self._json(403, {"error": "the control endpoints take no requests from web pages"})
         if path == "/generate_204" or host.startswith("connectivitycheck."):
             return HttpResponse(204, handler="netcheck")
         if path.startswith("/cast/chromecast/device/stadiaconfig"):
@@ -560,8 +575,9 @@ class Receiver:
 
     def _omaha(self, req: HttpRequest) -> HttpResponse:
         """Omaha update check: always "no update"."""
-        text = req.body.decode("utf-8", "replace")
-        apps = re.findall(r'<app\s[^>]*appid="([^"]+)"', text)
+        # the search can take time quadratic in its input, on the event loop: a bounded input
+        text = req.body[:OMAHA_REQUEST_BYTES].decode("utf-8", "replace")
+        apps = re.findall(r'<app\s[^>]*appid="([^"]+)"', text)[:OMAHA_APPS]
         now = datetime.datetime.now(datetime.UTC)
         midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
         elapsed_days = (now.date() - datetime.date(2007, 1, 1)).days
@@ -571,7 +587,7 @@ class Receiver:
             f'<daystart elapsed_seconds="{int((now - midnight).total_seconds())}" elapsed_days="{elapsed_days}"/>',
         ]
         body.extend(
-            f'<app appid="{appid}" status="ok"><updatecheck status="noupdate"/><ping status="ok"/></app>'
+            f'<app appid="{html.escape(appid)}" status="ok"><updatecheck status="noupdate"/><ping status="ok"/></app>'
             for appid in apps or ["{00000000-0000-0000-0000-000000000000}"]
         )
         body.append("</response>")
@@ -717,6 +733,8 @@ class Receiver:
     def publish_event(self, ev: dict[str, Any]) -> None:
         """A decoded input event from one of the controllers (``ev["controller"]`` says which)."""
         if self.events is not None:
+            if self.events.full():  # nobody is reading: make room for the newest
+                self.events.get_nowait()
             self.events.put_nowait(ev)
         if self.gamepads is not None:
             self.gamepads.on_event(ev)
@@ -726,7 +744,13 @@ class Receiver:
         return await asyncio.wait_for(self.events.get(), timeout)
 
     async def _stats_loop(self, interval: float = 10.0) -> None:
-        """Write each controller's inbound counters to the log whenever they change, so they survive an unclean stop."""
+        """Write each controller's counters to the log whenever something has come in from it, so
+        they survive an unclean stop.  What the receiver sends alone does not count: its checks to a
+        controller that is off would write a record every ten seconds."""
+
+        def inbound(stats: dict[str, int]) -> dict[str, int]:
+            return {k: v for k, v in stats.items() if not k.endswith("_out")}
+
         last: dict[str, Any] = {}
         try:
             while True:
@@ -739,8 +763,9 @@ class Receiver:
                         dict(ctl.game.endpoint.stats),
                         dict(ctl.game.state["wire_in"]),
                     )
-                    if snap != last.get(ctl.label):
-                        last[ctl.label] = snap
+                    came_in = (inbound(snap[0]), snap[1], snap[2], inbound(snap[3]), snap[4])
+                    if came_in != last.get(ctl.label):
+                        last[ctl.label] = came_in
                         ctl.log(
                             "rtc_stats",
                             _quiet=True,

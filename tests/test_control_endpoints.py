@@ -108,3 +108,28 @@ def test_clock_pin_fixed_date_freezes_the_controller_clock(tmp_path):
             await rx.stop()
 
     asyncio.run(run())
+
+
+def test_the_control_endpoints_take_no_requests_from_web_pages(tmp_path):
+    """A browser sends ``Origin`` with what a page asks it to post: refused, since the endpoints
+    have no login.  Reading the status and requests without the header work as before."""
+
+    async def run():
+        rx = make_receiver(tmp_path)
+        await rx.start()
+        fc = FakeController("127.0.0.1", rx.http.https_port, rx.protos, log=no_log)
+        port = rx.http.http_ports[0]
+        page = [("Origin", "http://example.com")]
+        try:
+            for path in ("/_rumble", "/_start_game", "/_audio"):
+                st, _, body = await fc.request("POST", "x.local", path, b"{}", "text/plain", page, port=port, tls=False)
+                assert st == 403 and b"web pages" in body
+                st, _, _ = await fc.request("POST", "x.local", path, b"{}", "text/plain", port=port, tls=False)
+                assert st == 409  # no controller yet: it got past the check
+            st, _, body = await fc.request("GET", "x.local", "/_status", headers=page, port=port, tls=False)
+            assert st == 200 and b'"controllers"' in body
+        finally:
+            fc.close()
+            await rx.stop()
+
+    asyncio.run(run())
