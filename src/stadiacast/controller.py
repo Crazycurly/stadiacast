@@ -422,7 +422,9 @@ class ControllerSession:
         if request and request.HasField("discovery"):
             # Autolinking boot (discovery.resume = true + SDP offer): the controller only continues
             # (GMsg poll, ICE) when the response carries the display oneof; without field 5 it logs
-            # to Clearcut and powers down.
+            # to Clearcut and powers down.  A registration without a discovery must not carry it:
+            # the controller would poll GMsg and take an answer that is not for the peer connection
+            # it then uses (protocol.md §11, the boot after provisioning).
             resp.display.display_id = DISPLAY_ID
             resp.display.display_token = self.display_token
             note += "; display{id,token} included because the request carries a (resumed) discovery"

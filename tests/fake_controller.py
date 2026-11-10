@@ -696,9 +696,26 @@ class FakeController:
         fvr = p.FirmwareVersionCheckResponse()
         fvr.ParseFromString(body)
         out["firmware_version_check"] = (st, fvr.requires_update)
+        out["register_controller"] = await self.register()
+        return out
+
+    async def register(self, *, resume: bool = False) -> tuple[int, dict]:
+        """``v1:RegisterController``: the HTTP status and the response as a dict.
+
+        ``resume`` sends the *autolinking* registration every boot of a real controller starts
+        with: a resumed discovery with the SDP offer inside (start the UDP socket first).
+        Without it the registration is the plain one, which a real controller sends half a second
+        after the autolinking one on the boot that follows Wi-Fi provisioning."""
+        p = self.protos
         reg = p.RegisterControllerRequest()
         reg.device_id, reg.cloud_device_id, reg.attempt_id = self.device_id, self.cloud_device_id, self.attempt_id
         reg.client_flag = False
+        if resume:
+            disc = reg.discovery
+            disc.device_id, disc.attempt_id = self.device_id, self.attempt_id
+            disc.sdp_offer_bundle = self.offer_bundle()
+            disc.resume.value = True
+            disc.client_flag = False
         st, _, body = await self.request(
             "POST",
             "cloudcast-pa.googleapis.com",
@@ -713,8 +730,7 @@ class FakeController:
             raise RuntimeError("Missing required field(s): poll_interval_ms must be > 0")
         if self.registration.HasField("display"):  # autolinking boot: the display token comes with the registration
             self.display_token = self.registration.display.display_token
-        out["register_controller"] = (st, p.to_dict(self.registration))
-        return out
+        return st, p.to_dict(self.registration)
 
     # ---- firmware flow: offer in DiscoverDisplay, answer via GMsg --------------
     def rpc_headers(self) -> list:

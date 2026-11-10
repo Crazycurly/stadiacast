@@ -157,6 +157,77 @@ def test_firmware_flow_offer_in_discover_display_answer_via_gmsg(tmp_path):
     asyncio.run(run())
 
 
+def test_the_autolinking_boot_offer_in_the_registration_answer_via_gmsg(tmp_path):
+    """What a real controller's boot does: the offer rides in RegisterController as a resumed
+    discovery, the response carries the display token, and the answer waits on GMsg."""
+
+    async def run():
+        rx = make_receiver(tmp_path)
+        await rx.start()
+        fc = fake(rx, "pad-a")
+        try:
+            await fc.start_udp()
+            st, reg = await fc.register(resume=True)
+            assert st == 200
+            assert reg["poll_interval_ms"] == "1000"
+            assert reg["display"]["display_token"] == single(rx).display_token
+            assert fc.display_token == single(rx).display_token
+            rec = http_records(rx, "rpc:RegisterController")[-1]
+            assert rec["request"]["discovery"]["resume"] == {"value": True}
+            assert "answer" in rec["discovery_offer"]
+            assert single(rx).session["offers_received"] == 1
+            assert single(rx).session["discovery"] is None  # this boot sends no DiscoverDisplay
+            assert single(rx).endpoint.remote.ufrag == fc.endpoint.ufrag
+
+            env, bundle = await fc.poll_gmsg()
+            assert env.message.id == 1
+            assert bundle.sdp.type == rx.protos.SDP_ANSWER
+            assert bundle.sdp.sdp_answer.ice_ufrag == single(rx).endpoint.ufrag
+            assert await fc.poll_gmsg() == (None, None)  # the ack
+            assert single(rx).session["gmsg"]["acked"] == 1
+
+            fc.connect()
+            await fc.wait_connected(10)
+            await asyncio.wait_for(fc.display_ready.wait(), 5)
+            assert fc.resolve_status == 200
+            assert (await fc.keepalive())["code"] == 0
+            await wait_for(lambda: single(rx).session["display"]["state"] == "ready")
+            assert single(rx).session["rtc"]["fingerprint_verified"] is True
+        finally:
+            fc.close()
+            await rx.stop()
+
+    asyncio.run(run())
+
+
+def test_a_plain_registration_after_the_autolinking_one_gets_no_display(tmp_path):
+    """The boot that follows Wi-Fi provisioning: a real controller registers with the offer and,
+    half a second later, again without a discovery, for a peer connection whose offer it never
+    sends.  Given the display in that second answer it polls GMsg, takes the answer to the first
+    offer, cannot connect with it and falls back to setup mode.  Without it the controller idles,
+    and its next boot connects."""
+
+    async def run():
+        rx = make_receiver(tmp_path)
+        await rx.start()
+        fc = fake(rx, "pad-a")
+        try:
+            await fc.start_udp()
+            _, first = await fc.register(resume=True)
+            _, second = await fc.register()
+            assert "display" in first
+            assert "display" not in second
+            assert second["poll_interval_ms"] == "1000"
+            assert second["registration_token"]
+            assert len(rx.controllers) == 1
+            assert single(rx).session["offers_received"] == 1
+        finally:
+            fc.close()
+            await rx.stop()
+
+    asyncio.run(run())
+
+
 def test_second_boot_resets_the_ack_release_clock(tmp_path):
     """Two full boots under one server process (report wakes alternate with full
     boots): the second boot's ACK poll must be held against ITS OWN dtls-connected,
