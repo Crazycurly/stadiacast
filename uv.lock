@@ -1596,7 +1596,7 @@ requires-dist = [
     { name = "cryptography", specifier = ">=42" },
     { name = "protobuf", specifier = ">=4.25" },
     { name = "pyaudiowpatch", marker = "sys_platform == 'win32' and extra == 'audio'", specifier = ">=0.2.12" },
-    { name = "pyopenssl", specifier = ">=23.2" },
+    { name = "pyopenssl", specifier = ">=24.3" },
     { name = "sounddevice", marker = "sys_platform != 'win32' and extra == 'audio'", specifier = ">=0.4.6" },
     { name = "vgamepad", marker = "sys_platform == 'win32' and extra == 'gamepad'", specifier = ">=0.1.0" },
 ]
@@ -1604,11 +1604,11 @@ provides-extras = ["audio", "ble", "gamepad", "passthrough"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "mypy", specifier = ">=1.13" },
+    { name = "mypy", specifier = ">=1.16" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-cov", specifier = ">=5" },
-    { name = "ruff", specifier = ">=0.8" },
-    { name = "types-protobuf", specifier = ">=5" },
+    { name = "ruff", specifier = ">=0.14.14" },
+    { name = "types-protobuf", specifier = ">=7.34.1" },
 ]
 release = [{ name = "pyinstaller", specifier = ">=6.11" }]
 
