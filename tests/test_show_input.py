@@ -5,6 +5,8 @@ from __future__ import annotations
 import datetime
 import json
 
+import pytest
+
 from stadiacast.show_input import load_input_events, main
 
 
@@ -66,3 +68,10 @@ def test_since_filter_and_a_direct_jsonl_path(tmp_path, capsys):
     assert out.startswith("1 input reports in ")
     assert "stadia" in out
     assert "c1" not in out
+
+
+def test_help_is_plain_text(capsys):
+    with pytest.raises(SystemExit):
+        main(["--help"])
+    out = capsys.readouterr().out
+    assert "stadiacast-show-input captures/<stamp>" in out and "``" not in out

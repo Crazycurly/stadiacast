@@ -19,6 +19,14 @@ from typing import Any
 
 from stadiacast.gamepad import button_name
 
+DESCRIPTION = """\
+Summarize the controller input recorded in a receiver run: per controller, every button press in
+order with the button's name and how long it was held, and the range each stick and trigger
+covered.
+
+    stadiacast-show-input captures/<stamp> [--since HH:MM:SS]
+"""
+
 
 def _ts(rec: dict[str, Any]) -> float:
     return datetime.datetime.fromisoformat(rec["ts"]).timestamp()
@@ -77,7 +85,7 @@ def _print_ranges(events: list[dict[str, Any]]) -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
-        prog="stadiacast-show-input", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+        prog="stadiacast-show-input", description=DESCRIPTION, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     ap.add_argument("run", help="run directory (captures/<stamp>) or a server.jsonl file")
     ap.add_argument("--since", default="00:00:00", help="only events at or after this local time (HH:MM:SS)")

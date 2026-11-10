@@ -13,9 +13,9 @@ WIRE_HEADER_LEN = 8
 WIRE_ID_RTP = 0x66  # "streamer-input" id of the game-phase session (not the display link)
 WIRE_ID_RPC = 0xFFFA  # RPC id of the game-phase session on its MuxedChannel.
 # INVALID on the display link: the controller rejects it there and drops the
-# record ("Failed to parse WireHeader2."): seen live as 200 requests without a reply.
+# record ("Failed to parse WireHeader2."), so requests sent with it get no reply.
 WIRE_ID_DC_RPC_CONTROLLER = 0x74  # id the controller uses when it is
-WIRE_ID_DC_RPC_DISPLAY = 0x75  # ... the DTLS client (seen live: its DisconnectRequest); 0x75 = the other side
+WIRE_ID_DC_RPC_DISPLAY = 0x75  # ... the DTLS client (its DisconnectRequest, for one); 0x75 = the other side
 WIRE_IDS_DC_RPC = (WIRE_ID_DC_RPC_CONTROLLER, WIRE_ID_DC_RPC_DISPLAY)
 
 

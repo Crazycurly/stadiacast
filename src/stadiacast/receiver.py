@@ -187,8 +187,8 @@ class Receiver:
 
     async def _spawn_helper(self, name: str, args: list[str], out_name: str) -> asyncio.subprocess.Process:
         """Run a helper process with its output in the run directory (see :mod:`stadiacast.helpers`)
-        and watch it: a helper is meant to outlive the receiver, so one that exits is logged, with
-        the last lines it wrote (the port it could not bind, usually)."""
+        and watch it: a helper is meant to run for as long as the receiver, so one that exits is
+        logged, with the last lines it wrote (the port it could not bind, usually)."""
         assert self.cfg.log_dir is not None
         out_path = os.path.join(self.cfg.log_dir, out_name)
         with open(out_path, "ab") as out:

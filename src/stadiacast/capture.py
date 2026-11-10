@@ -2,13 +2,13 @@
 
 The capture runs in this process and the sender pipes the PCM into ffmpeg's stdin, on every
 platform, because ffmpeg's own device inputs are not reliable for this: its AVFoundation input
-dropped a tenth of the samples on a Mac (measured, and audible as a choppy stream).
+drops about a tenth of the samples on a Mac, audible as a choppy stream.
 
 - macOS and Linux capture through PortAudio (the ``sounddevice`` package, part of the ``audio``
   extra). macOS has no loopback of its own: what the Mac plays is reached through a virtual
   output such as BlackHole, chosen as the sound output or inside a Multi-Output Device; the first
   input whose name looks like one is the default. On Linux the default output's PulseAudio
-  monitor is used (written from the documentation, not yet tried on a real machine).
+  monitor is used; that path has not run on a Linux machine yet.
 - Windows captures the default output's WASAPI loopback (:mod:`stadiacast.loopback`).
 
 Both kinds share one shape: a :class:`CaptureDevice` says what PCM format the device delivers
@@ -147,7 +147,7 @@ class PortAudioCapture(BlockCapture):
             dtype="int16",
             device=self.name,
             # "low" asks CoreAudio for 20 ms I/O buffers: the default 85 ms ones hand over four
-            # blocks at once, which the sender's pacer would have to trim (measured on a Mac).
+            # blocks at once, which the sender's pacer would have to trim.
             latency="low",
             callback=self._callback,
         )

@@ -6,6 +6,6 @@ Wi-Fi mode (stock firmware) keeps working with the owner's own PC.
 
 __version__ = "1.0.1"
 
-#: Name the receiver reports to the controller (HTTP ``Server`` header, SDP build number).  Wire-visible and
-#: proven live; it predates the project name and is kept on purpose.
+#: Name the receiver reports to the controller (HTTP ``Server`` header, SDP build number).  It is what the
+#: controller sees on the wire, so it is kept on purpose although it predates the project name.
 SERVER_NAME = "stadia-local-receiver"

@@ -571,8 +571,8 @@ class AudioSender:
         """Multiply interleaved int16 PCM by a gain from 0 to 1 (the system volume).
 
         An attenuation never leaves the int16 range, so no sample needs clipping, and ``map`` over
-        the array keeps the multiplication out of Python bytecode (measured three times faster
-        than a loop).
+        the array keeps the multiplication out of Python bytecode, about three times faster than a
+        loop.
         """
         gain = min(1.0, max(0.0, gain))
         if not chunk or gain > 1.0 - 1e-3:

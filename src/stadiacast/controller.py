@@ -43,8 +43,8 @@ DISPLAY_STATES = ("idle", "dtls-connected", "get-controller-state-sent", "contro
 
 #: Placeholder identity of this display in the discovery responses (the firmware only checks presence).
 DISPLAY_ID = SERVER_NAME
-#: The controller echoes the display token as ``GmsgPollRequest.subscription`` (confirmed live), so a
-#: per-controller token attributes GMsg polls.  Protocol maximum: 63 characters.
+#: The controller echoes the display token as ``GmsgPollRequest.subscription``, so a per-controller
+#: token attributes GMsg polls.  Protocol maximum: 63 characters.
 DISPLAY_TOKEN_PREFIX = f"{SERVER_NAME}-display"
 #: Placeholder ``registration_token`` of RegisterControllerResponse (presence is all the firmware checks).
 REGISTRATION_TOKEN = SERVER_NAME
@@ -499,7 +499,7 @@ class ControllerSession:
 
         The controller sends it on entering S/UNREGISTERING, i.e. after the connection registered
         its RPC read callback; our 200 then leads to ACCEPT_COMMANDS.  A display RPC sent before
-        that point never got an answer live, so this is the default trigger.
+        that point gets no answer, so this is the default trigger.
         """
         first = self._resolved_at is None
         self._resolved_at = time.monotonic()

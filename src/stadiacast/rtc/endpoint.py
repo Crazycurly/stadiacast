@@ -130,8 +130,7 @@ class RtcEndpoint(asyncio.DatagramProtocol):
         self.dtls_client_delay = dtls_client_delay
         # Our checks to the selected pair go out every 2.5 s (keepalive).  With fast_check_interval > 0
         # they go out that often from pair selection until DTLS starts (for at most fast_check_window
-        # seconds): in every logged session the controller's first DTLS flight followed our 2.5 s check
-        # by ~0.12 s.
+        # seconds): the controller's first DTLS flight follows one of our checks, by about 0.12 s.
         self.fast_check_interval = fast_check_interval
         self.fast_check_window = fast_check_window
         self._fast_until = 0.0

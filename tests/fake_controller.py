@@ -110,12 +110,10 @@ class FakeController:
         # raw_dtls (what the firmware offers): input and RPCs travel as WireHeader2
         # messages in DTLS application data instead of SRTP
         self.raw_dtls = raw_dtls
-        # Post-DTLS display connection.  The
-        # live controller started ResolveDiscovery ~0.48 s after DTLS; until then
-        # (OnConnected) no 0xFFFA reader exists.  early_rpc: what a display RPC
-        # arriving in that window does -- "drop" (the demux drops unregistered ids)
-        # or "stall" (what one live run showed: OnConnected never ran, no
-        # ResolveDiscovery, no RPC answers).
+        # Post-DTLS display connection.  A controller starts ResolveDiscovery about 0.48 s after
+        # DTLS; until then (OnConnected) no 0xFFFA reader exists.  early_rpc: what a display RPC
+        # arriving in that window does, "drop" (the demux drops unregistered ids) or "stall"
+        # (OnConnected never runs: no ResolveDiscovery, no RPC answers).
         self.on_connected_delay = on_connected_delay
         self.handoff_delay = handoff_delay  # ResolveDiscovery 200 -> discovery hands the DC to the app
         self.early_rpc = early_rpc
@@ -310,8 +308,8 @@ class FakeController:
         self.endpoint.send_wire(WIRE_ID_DC_RPC_CONTROLLER, response)
 
     def _on_start_game(self, ticket: int, req) -> None:
-        """READY dispatcher slot 5 -> app event 0xb START_GAME: BROWSE moves to
-        STARTING_GAME and holds the reply (app+0x617c) until GAME_STARTED / GAME_STOPPED."""
+        """StartGame in READY: the app moves from BROWSE to STARTING_GAME and holds the reply
+        until GAME_STARTED / GAME_STOPPED."""
         self.start_game_requests.append({"ticket": ticket, "key": req.value, "number": req.number})
         if self.app_state != "browse":  # only BROWSE handles START_GAME: refused at once
             self.endpoint.send_wire(
@@ -787,8 +785,8 @@ class FakeController:
         so the next poll acks it."""
         p = self.protos
         poll = p.GmsgPollRequest()
-        # The firmware polls with the display token it was given (confirmed live); before any discovery
-        # it has only the registration token.
+        # The firmware polls with the display token it was given; before any discovery it has only
+        # the registration token.
         poll.subscription = self.display_token or (
             self.registration.registration_token if self.registration else "unregistered"
         )

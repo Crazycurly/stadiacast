@@ -1,13 +1,12 @@
 """TLS certificate handling: the built-in credential, your own chain, a lab pair and the clock pin.
 
 The controller validates the server chain against its built-in Google Trust Services roots and
-checks neither the hostname, nor the validity dates, nor revocation (all confirmed on a real
-controller), so any GTS-issued chain works for every name it connects to and never needs
-renewing.  The receiver ships one such chain with its key, the *built-in credential*: a
-certificate GTS issued for a domain registered for this project and revoked at our request
-before the key was published, which makes it useless to every ordinary TLS client and exactly
-enough for the controller.  ``--cert``/``--key``, or a pair under ``certs/``, replace it with
-your own; see ``docs/setup.md``.
+checks neither the hostname, nor the validity dates, nor revocation, so any GTS-issued chain
+works for every name it connects to and never needs renewing.  The receiver ships one such
+chain with its key, the *built-in credential*: a certificate GTS issued for a domain registered
+for this project and revoked at our request before the key was published, which makes it
+useless to every ordinary TLS client and exactly enough for the controller.  ``--cert``/``--key``,
+or a pair under ``certs/``, replace it with your own; see ``docs/setup.md``.
 """
 
 from __future__ import annotations

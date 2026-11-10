@@ -20,8 +20,8 @@ from OpenSSL import SSL, crypto
 from stadiacast import SERVER_NAME
 from stadiacast.rtc.srtp import SRTP_PROFILES
 
-# The controller only offers SRTP_AES128_CM_SHA1_80 (string at 0x60379076); the
-# others are here so the fake controller / other peers can be exercised too.
+# The controller only offers SRTP_AES128_CM_SHA1_80; the others are here so the fake
+# controller / other peers can be exercised too.
 DEFAULT_SRTP_PROFILES = "SRTP_AES128_CM_SHA1_80:SRTP_AEAD_AES_128_GCM:SRTP_AEAD_AES_256_GCM:SRTP_AES128_CM_SHA1_32"
 
 
@@ -97,7 +97,7 @@ class DtlsSession:
         if role not in ("client", "server"):
             raise ValueError(role)
         ctx = SSL.Context(SSL.DTLS_METHOD)
-        ctx.use_privatekey(cert.key)  # cryptography objects (pyOpenSSL >= 23.2)
+        ctx.use_privatekey(cert.key)  # cryptography objects (pyOpenSSL >= 24.3)
         ctx.use_certificate(cert.cert)
         ctx.set_verify(SSL.VERIFY_PEER | SSL.VERIFY_FAIL_IF_NO_PEER_CERT, lambda *_: True)  # fingerprint checked later
         ctx.set_tlsext_use_srtp(srtp_profiles.encode())
@@ -129,7 +129,7 @@ class DtlsSession:
         except SSL.WantReadError:
             return
         self.handshake_complete = True
-        cert = self.conn.get_peer_certificate(as_cryptography=True)  # pyOpenSSL >= 23.2
+        cert = self.conn.get_peer_certificate(as_cryptography=True)  # pyOpenSSL >= 24.3
         self.peer_fingerprint = ("sha-256 " + cert.fingerprint(hashes.SHA256()).hex(":").upper()) if cert else None
         prof = self.conn.get_selected_srtp_profile()
         self.profile = prof.decode() if prof else None
