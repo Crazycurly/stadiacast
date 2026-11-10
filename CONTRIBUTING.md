@@ -113,23 +113,30 @@ controller sent, when, and what it did in response, with the log records that sh
 - By submitting a pull request you agree that your contribution is licensed under the
   [MIT License](LICENSE).
 - Add an entry under *Unreleased* in [CHANGELOG.md](CHANGELOG.md).
-- CI must be green. Maintainers squash-merge.
+- CI must be green. Pull requests are rebase-merged, so every commit lands on `main` as it
+  is.
 
 By participating you agree to the [Code of Conduct](CODE_OF_CONDUCT.md). Security issues go
 through [SECURITY.md](SECURITY.md), not the public tracker.
 
 ## Releasing
 
-1. Set the version in `src/stadiacast/__init__.py` and turn the *Unreleased* section of
-   `CHANGELOG.md` into that version's section, with the date.
-2. Commit, then tag and push: `git tag vX.Y.Z && git push origin main vX.Y.Z`.
-3. The Release workflow builds the executables for Windows, macOS and Linux, the sdist and the
-   wheel, and attaches them to the release of that tag: it creates a draft release with the
-   CHANGELOG section as its notes when none exists yet, so publish the draft after a look. Creating
-   the release on GitHub first works too; the files are then attached to it. Publishing the
-   release runs the Publish workflow, which uploads the attached sdist and wheel to PyPI as
-   the trusted publisher registered there for the project (this repository, `publish.yml`,
-   environment `pypi`; no token); `gh workflow run publish.yml -f tag=vX.Y.Z` publishes an
-   existing release by hand.
-4. `make exe` builds the executables for the current platform into `dist/`, for a check before
+1. Set the version in `src/stadiacast/__init__.py`, turn the *Unreleased* section of
+   `CHANGELOG.md` into that version's section with the date, and update the comparison links
+   at the bottom of the file: a line for the new version, and *Unreleased* compared from its
+   tag.
+2. Commit, then make an annotated tag and push both:
+   `git tag -a vX.Y.Z -m "Stadiacast X.Y.Z" && git push origin main vX.Y.Z`.
+3. The tag runs the Release workflow. It builds the executables for Windows, macOS and Linux,
+   the sdist and the wheel, and creates a draft release of the tag with all of them attached
+   and the CHANGELOG section as its notes. Do not create or publish a release by hand before
+   it is done: publishing runs the Publish workflow, which takes the sdist and the wheel from
+   the release and finds nothing while they are not attached yet.
+4. Look the draft over and publish it (`gh release edit vX.Y.Z --draft=false --latest`, or in
+   the web interface). The Publish workflow then uploads the release's sdist and wheel to PyPI
+   as the trusted publisher registered there for the project (this repository, `publish.yml`,
+   environment `pypi`; no token). When that run failed, for example because the release was
+   published before its files were attached, `gh workflow run publish.yml -f tag=vX.Y.Z` runs
+   it again once they are there; files already on PyPI are skipped.
+5. `make exe` builds the executables for the current platform into `dist/`, for a check before
    tagging; `gh workflow run release.yml` builds all three as workflow artifacts without a tag.
