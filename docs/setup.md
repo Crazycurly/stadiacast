@@ -131,11 +131,10 @@ Copy `fullchain.pem` (the full chain: the intermediate matters) and `privkey.pem
 
 `tools/start_receiver.sh` starts the receiver in the background with `--preset live` and a
 fresh run directory `captures/<stamp>/`. On macOS it adds a packet capture of the whole
-hotspot interface (`IFACE`) when `/dev/bpf*` is readable, which `sudo chmod o+rw /dev/bpf*`
-makes it until the next boot; `PCAP=0` skips the capture, `PCAP_FILTER` narrows it. It reads
-the rig settings from the environment or from a `.env` file at the repo root (see
-`.env.example`), and passes any extra arguments on to the receiver, where they override the
-preset:
+hotspot interface (`IFACE`) when `/dev/bpf*` is readable: `sudo chmod o+rw /dev/bpf*` makes it
+so until the next boot. `PCAP=0` skips the capture, `PCAP_FILTER` narrows it. It reads the rig
+settings from the environment or from a `.env` file at the repo root (see `.env.example`), and
+passes any extra arguments on to the receiver, where they override the preset:
 
 ```sh
 tools/start_receiver.sh --start-game        # also start the game session once READY
