@@ -3,9 +3,10 @@
 # capture when /dev/bpf* is readable, in a fresh captures/<stamp>/ run directory.
 #
 # The defaults describe the reference rig: a macOS Internet Sharing hotspot on bridge100 with
-# the Mac at 192.168.2.1, the controller at 192.168.2.2 and the upstream resolver at 192.168.1.1.
-# Override them with environment variables, or put KEY=value lines in a .env file at the repo
-# root (see .env.example):
+# the controller at 192.168.2.2 and the upstream resolver at 192.168.1.1. The receiver detects
+# its own address on the controller's network (the one that routes to CONTROLLER_IP) unless
+# ADVERTISE_IP is set. Override them with environment variables, or put KEY=value lines in a
+# .env file at the repo root (see .env.example):
 #   ADVERTISE_IP, DNS_UPSTREAM, CONTROLLER_IP, IFACE, PCAP=0, PCAP_FILTER, PYTHON
 # Extra arguments are passed to the receiver and override the preset.  Stop with tools/stop_receiver.sh.
 set -euo pipefail
@@ -18,7 +19,7 @@ if [ -f .env ]; then
   set +a
 fi
 
-ADVERTISE_IP=${ADVERTISE_IP:-192.168.2.1}
+ADVERTISE_IP=${ADVERTISE_IP:-}   # empty: the receiver detects it
 DNS_UPSTREAM=${DNS_UPSTREAM:-192.168.1.1}
 CONTROLLER_IP=${CONTROLLER_IP:-192.168.2.2}
 IFACE=${IFACE:-bridge100}
@@ -51,8 +52,9 @@ if [ "$PCAP" = 1 ]; then
   fi
 fi
 
-args=(--preset live --advertise-ip "$ADVERTISE_IP" --dns-upstream "$DNS_UPSTREAM" --controller-ip "$CONTROLLER_IP"
-      -v --log-dir "$RUN")
+args=(--preset live)
+if [ -n "$ADVERTISE_IP" ]; then args+=(--advertise-ip "$ADVERTISE_IP"); fi
+args+=(--dns-upstream "$DNS_UPSTREAM" --controller-ip "$CONTROLLER_IP" -v --log-dir "$RUN")
 nohup "$PYTHON" -m stadiacast "${args[@]}" "$@" > "$RUN/server.out" 2>&1 &
 echo $! > "$RUN/server.pid"
 
@@ -65,8 +67,14 @@ if ! grep -q '"event": "ready"' "$RUN/server.jsonl" 2>/dev/null; then
   exit 1
 fi
 
+advertised=$(sed -n 's/.*"event": "ready".*"advertise_ip": "\([^"]*\)".*/\1/p' "$RUN/server.jsonl" | head -n 1)
+if [ -z "$ADVERTISE_IP" ]; then advertised="$advertised (detected)"; fi
+
 cat <<MSG
 receiver ready (preset live), run dir: $RUN
+  advertise IP:   $advertised
+  DNS upstream:   $DNS_UPSTREAM
+  controller IP:  $CONTROLLER_IP
   wake the controller: ~1 s press of the Stadia button (release at the first vibration).
   a blinking light with no rumble is a report wake: press again.
   decoded input:  $PYTHON -m stadiacast.show_input $RUN
