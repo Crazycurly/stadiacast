@@ -145,8 +145,8 @@ from source has a third command, `stadiacast-show-input`. The `ble` extra is the
 provisioning, `audio` and `gamepad` are the [headset audio](#headset-audio) capture and the
 [virtual gamepad](#virtual-gamepad-windows), and `passthrough` lets the receiver fetch the
 controller's configuration (`stadiaconfig`) from Google for it, which only happens when
-`clients3.google.com` is redirected to the receiver (not by default). The scripts under
-`tools/` find the virtualenv on their own.
+`clients3.google.com` is redirected to the receiver (not by default).
+`tools/start_receiver.sh` finds the virtualenv on its own.
 
 ## Input
 

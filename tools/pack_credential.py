@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Pack a PEM certificate chain and its key into the credential bundle the receiver embeds.
 
-    tools/pack_credential.py --chain fullchain.pem --key privkey.pem --out identity.bin
+    uv run tools/pack_credential.py --chain fullchain.pem --key privkey.pem --out identity.bin
+
+It imports the package, so it runs from a source checkout with the project's environment:
+``uv run`` as above, or ``.venv/bin/python tools/pack_credential.py``.
 
 The output is an unencrypted PKCS#12 bundle (``openssl pkcs12 -in identity.bin -nodes -passin pass:``
 reads it).  The receiver's own copy ships inside the package; a fork that wants to embed a
