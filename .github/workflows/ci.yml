@@ -32,6 +32,22 @@ jobs:
       - run: uv run pytest -q
       - run: uv run python -m stadiacast.schema_compiler --check
 
+  lowest:
+    # Every direct dependency at the lowest version pyproject.toml allows, on the lowest Python,
+    # so the declared floors stay true. Installed for this platform only, outside the lock.
+    name: test (ubuntu-latest, py3.11, lowest dependencies)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0
+        with:
+          python-version: "3.11"
+      - run: uv venv
+      - run: uv pip install --resolution lowest-direct -e ".[ble,passthrough,audio,gamepad]" --group dev
+      - run: uv run --no-sync pytest -q
+      - run: uv run --no-sync python -m stadiacast.schema_compiler --check
+
   lint:
     name: lint and types
     runs-on: ubuntu-latest
