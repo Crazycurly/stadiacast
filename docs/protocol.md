@@ -31,6 +31,12 @@ RPC failure. Its HTTPS requests are serialized through one client. In order:
 
 The `v1:` requests carry `controller-device-id` and `controller-cloud-device-id` headers.
 
+The receiver answers a request only when its host resolves to the receiver. Its DNS sink
+redirects `*.googleapis.com` and, by default, `time.google.com` (`--dns-redirect`), and forwards
+every other name to the real resolver: with the default settings the first two rows are fetched
+from Google, and the receiver's answers for them apply once `connectivitycheck.gstatic.com` and
+`clients3.google.com` are redirected to it too.
+
 ## 2. Discovery RPCs (`schemas/discovery_api.proto`)
 
 The schemas were reconstructed from the firmware's nanopb field tables: numbers, wire types,
@@ -262,8 +268,8 @@ only that the chain leads to a GTS root. Revocation is not checked either: the C
 carries no `status_request` extension, no CRL or OCSP traffic has ever been seen, and a
 certificate revoked at the CA with reason keyCompromise was accepted exactly like a valid one
 (confirmed on a real controller through boot, autolink, input and rumble). `--clock-pin
-auto|ISO-DATE` serves a chosen time instead of the real one (for example the midpoint of the
-certificate's validity window).
+auto|ISO-DATE` serves a chosen time instead of the real one (`auto` is the midpoint of the
+certificate's validity window); `--clock-pin real`, the default, serves the host clock.
 
 ## 9. The `live` preset
 
@@ -281,7 +287,7 @@ certificate's validity window).
 
 ## 10. Controller identity and several controllers
 
-The firmware identifies itself in three places, all confirmed live:
+The firmware identifies itself in these places, all confirmed live:
 
 | where | what |
 |---|---|
@@ -302,7 +308,59 @@ credentials and DTLS certificates, so nothing in the RTC layer has to demultiple
 candidate in each controller's answer bundle points it at its own port. A controller that
 reboots is matched to its existing session, which is reset; other sessions are untouched.
 
-## 11. Confirmed versus assumed
+## 11. Wi-Fi provisioning over Bluetooth LE (`ble_provisioner.py`)
+
+A controller with no network to join (never set up, reset, or its network gone) pulses its
+light orange and advertises a setup service over Bluetooth LE, which the Stadia app used to
+hand it Wi-Fi credentials. `stadiacast-provision` does the same. The advertisement carries Fast
+Pair service data (UUID `0xFE2C`).
+
+The setup service (`0000fea0-…`) and what the tool uses of it:
+
+| characteristic | use |
+|---|---|
+| `0328fe40-002f-11e5-87d0-0002a5d5c51b` | write: the `connect_to_network` JSON, below |
+| `0228fe40-…` | write: settings JSON; `{}` starts a Wi-Fi scan |
+| `0428fe40-…` | a JSON response stream (not used) |
+| `0c7c6160-fab2-11e4-9fbb-0002a5d5c51b` | read and notify: the setup state, one byte |
+| `0d7c6160-…` | read: the controller's IP address, `127.0.0.1` while it has none |
+| `127c6160-…` | read and notify: OTA status JSON |
+
+**Windows.** Larger values are read through pairs of characteristics, `XX6c6160-…` (control)
+and `XX7c6160-…` (data): the page index goes to the control characteristic as two little-endian
+bytes, the data characteristic is then read, 512 bytes a page, until a page comes back short or
+empty. The pages together are gzip-compressed JSON. Window `1a` holds the crypto bundle, whose
+`device_info.public_key` is the controller's RSA public key (2048 bits on the controllers seen;
+SubjectPublicKeyInfo DER in base64); it has taken up to 13 pages. Window `15` holds the results
+of the Wi-Fi scan, a list of `{ssid, bssid, frequency, signal_level, wpa_auth, wpa_cipher}`;
+`19` holds device information and `1c` the device state.
+
+**Credentials.** One JSON object, written with response to the connect characteristic:
+
+```json
+{"ssid": "…", "wpa_auth": 7, "wpa_cipher": 4, "enc_passwd": "…"}
+```
+
+`enc_passwd` is the password encrypted to the controller's key with RSA PKCS#1 v1.5, in
+base64; an open network has none. `wpa_auth` and `wpa_cipher` name the network's security in
+the controller's own enums (`wpa_auth` 1 open, 2 WEP, 5 WPA-PSK, 7 WPA2-PSK; `wpa_cipher`
+1 none, 2 WEP, 3 TKIP, 4 CCMP) and have to match it. `bssid` and `frequency`, copied from a
+scan entry, may be added; without them the controller finds the network by its name.
+
+**States.** `0x14` and `0x16` are the start and the end of a scan. After the credentials come
+`0x1e` (connecting), then `0x3c` (connected) or `0x4f` (the credentials were refused or the
+join failed); `0x34` and `0x4e` report JSON the controller could not parse. A controller that
+joined leaves setup mode and drops the Bluetooth link a few seconds after `0x1e`, often without
+sending `0x3c` first, so the dropped link is the sign of success to rely on.
+
+**The scan.** Some controllers (seen with firmware build 316382) drop the Bluetooth link a few
+seconds after the scan that a write to the settings characteristic starts, before credentials
+copied from its results can be written. `stadiacast-provision` therefore leaves the scan out
+unless `--wifi-scan` asks for it, and reads the key before the scan when it does.
+
+The first boot after provisioning is described in §10.
+
+## 12. Confirmed versus assumed
 
 **Confirmed on the wire and in the firmware:**
 
@@ -325,6 +383,8 @@ reboots is matched to its existing session, which is reset; other sessions are u
 - The battery gauge (#10) and the headset notification (#4) of §5, both seen live, and the
   hardware fields of `GetControllerStateResponse`.
 - Omaha and Clearcut message formats.
+- The Bluetooth setup service of §11: the windowed reads, the key, the credentials and the
+  states, on networks with WPA2-PSK and CCMP.
 - The certificate check: the chain must lead to a GTS root; hostname, validity dates and
   revocation are not checked (§8).
 
@@ -337,3 +397,5 @@ reboots is matched to its existing session, which is reset; other sessions are u
 - The input RTP payload type (96) and the ack format (`InputProtocolMessage` with only
   `ack_sequence_number`, sent on our own SSRC).
 - What the game session's RPC requests mean (they are answered with an empty OK).
+- The security enums of §11 other than WPA2-PSK with CCMP (7 and 4), the one pair a controller
+  has joined a network with here.

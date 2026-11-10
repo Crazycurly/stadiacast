@@ -208,23 +208,26 @@ stadiacast-provision provision --address <ADDR> --ssid <SSID>      # prompts for
 The tool reads the controller's RSA public key and writes the network's name and the password,
 encrypted under that key; the controller then finds the network by itself. It assumes
 WPA2-Personal (AES) when you give a password and an open network when you leave it blank. The
-BLE link dropping right after the write is normal: the controller leaves setup mode. If the
-controller cannot join (`STATE -> 0x4f`), the tool says what to check.
+controller drops the Bluetooth link when it leaves setup mode with the credentials, and the
+tool ends there with `Done`. If the controller cannot join (`STATE -> 0x4f`) or gives no sign
+of joining, the tool ends with an error that says what to check.
 
 For a network with other security, add `--wifi-scan`: the controller scans for Wi-Fi networks
 first and the tool copies the security it reports for yours. Some controllers drop the BLE link
-a few seconds after that scan; the tool then stops with a Bluetooth error after
-`STATE -> 0x16 (scan/netcheck done)`. Give the security by hand instead, without the scan:
-`--wpa-auth` and `--wpa-cipher` take the values listed in `--help`.
+a few seconds after that scan; the tool then says so and names the options to give the security
+by hand instead, without the scan: `--wpa-auth` and `--wpa-cipher` take the values listed in
+`--help`.
 
-**What to expect on the first boot** (seen live on firmware `ota.282115`): the controller joins
-the Wi-Fi, blinks white, resolves the Google names through the receiver and registers with it
-(`controller_new` in the log), but a controller that has never been linked stops there. It
-registers a second time, then idles (pinging the gateway every two seconds) until it powers
-itself off after a few minutes. Wake it again: the second boot takes the normal autolinking
-path and connects (two short rumbles, steady white). No link code has to be typed.
+**What to expect on the first boot:** the controller joins the Wi-Fi, blinks white, resolves
+the Google names through the receiver and registers with it (`controller_new` in the log), but
+a controller that has never been linked stops there. It registers a second time, then idles
+(pinging the gateway every two seconds) until it powers itself off after a few minutes. Wake it
+again: the second boot takes the normal autolinking path and connects (two short rumbles,
+steady white). No link code has to be typed.
 
-On macOS, Bluetooth addresses are CoreBluetooth UUIDs that can change between runs; `--service-data-match HEX` accepts the device by a fragment of its Fast Pair service data
-instead (shown by `scan`). The password can also come from the `STADIA_WIFI_PW` environment
-variable. `list-services` and `windows` dump the GATT table and the device's JSON windows for
-debugging.
+On macOS, Bluetooth addresses are CoreBluetooth UUIDs that can change between runs;
+`--service-data-match HEX` finds the device by a fragment of its Fast Pair service data instead
+(shown by `scan`). The password can also come from the `STADIA_WIFI_PW` environment variable.
+`list-services` and `windows` dump the GATT table and the device's JSON windows for debugging;
+[protocol.md](protocol.md#11-wi-fi-provisioning-over-bluetooth-le-ble_provisionerpy) describes
+the setup service.
