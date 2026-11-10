@@ -18,6 +18,8 @@ captures/
 # Certificates and private keys: never commit them
 certs/*
 !certs/README.md
+# certbot's directory from the command in docs/setup.md, with the private key in it
+/le/
 
 # Local overrides for tools/start_receiver.sh
 .env
