@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Start the receiver with the configuration proven end to end (--preset live), plus a packet
-# capture when /dev/bpf* is readable, in a fresh captures/<stamp>/ run directory.
+# capture when /dev/bpf* is readable (macOS), in a fresh captures/<stamp>/ run directory.
 #
 # The defaults describe the reference rig: a macOS Internet Sharing hotspot on bridge100 with
 # the controller at 192.168.2.2 and the upstream resolver at 192.168.1.1. The receiver detects
@@ -65,8 +65,10 @@ if [ "$PCAP" = 1 ]; then
       > "$RUN/tcpdump.out" 2>&1 &
     tcpdump_pid=$!
     echo "$tcpdump_pid" > "$RUN/tcpdump.pid"
+  elif [ -e /dev/bpf0 ]; then
+    echo "capture skipped: /dev/bpf* not accessible (sudo chmod o+rw /dev/bpf* after each boot, or PCAP=0)" >&2
   else
-    echo "capture skipped: /dev/bpf* not accessible (sudo chmod o+rw /dev/bpf* once, or PCAP=0)" >&2
+    echo "capture skipped: it needs macOS's /dev/bpf* (PCAP=0 skips it)" >&2
   fi
 fi
 

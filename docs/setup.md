@@ -15,8 +15,12 @@ gateway and DNS server. The receiver runs on the Mac, spawns the DNS sink on por
 SNTP server on port 123, and listens on 443, 80 and 8008 (HTTPS and plaintext HTTP) plus UDP
 40000 and 40001 for the two WebRTC sessions.
 
-Every number above is a default of `tools/start_receiver.sh` and of `stadiacast`; see
-`.env.example` and `stadiacast --help` to change them.
+`tools/start_receiver.sh` defaults to this rig: the upstream resolver `192.168.1.1`, the
+controller at `192.168.2.2` and the capture on `bridge100` (`.env.example` changes them).
+`stadiacast` itself listens on the ports above and assumes the controller at `192.168.2.2`,
+and it detects its own address, the one on the interface that routes to the controller. It has
+no default resolver: it runs the DNS sink only with `--dns-upstream`, and the SNTP server only
+with `--sntp`, which `--preset live` turns on.
 
 ## Network
 
@@ -25,10 +29,10 @@ The only hard requirement is that **the controller resolves names through the re
 `googleapis.com` and `time.google.com` with the receiver's IP (A records; AAAA gets an empty
 answer so the firmware stays on IPv4) and forwards every other name to that resolver.
 `--dns-redirect` sets the names redirected besides the `googleapis.com` ones (comma
-separated, default `time.google.com`: keep it in the list when you add a name). The firmware's two other names,
-`connectivitycheck.gstatic.com` (its connectivity check, `/generate_204`) and
-`clients3.google.com` (its configuration, `stadiaconfig`), are forwarded like any other, so
-the controller still makes those two requests to Google at boot.
+separated, default `time.google.com`: keep it in the list when you add a name). The
+firmware's two other names, `connectivitycheck.gstatic.com` (its connectivity check,
+`/generate_204`) and `clients3.google.com` (its configuration, `stadiaconfig`), are forwarded
+like any other, so the controller still makes those two requests to Google at boot.
 
 Options, from simplest to most involved:
 
@@ -38,9 +42,15 @@ Options, from simplest to most involved:
   server to the controller alone (a static lease or a per-client DNS option). Not to the whole
   LAN: the sink answers every device alike, so the others would get `*.googleapis.com` and
   `time.google.com` pointed at the receiver and their Google services would fail.
-- **Standalone DNS sink.** `python -m stadiacast.helpers.dns_sink --upstream <router>
-  --redirect-ip <receiver> --log dns.jsonl` runs it without the receiver, for example on a
-  different host.
+- **Standalone DNS sink**, for example on a different host, from any install:
+
+  ```sh
+  stadiacast --helper dns_sink --upstream <router> --redirect-ip <receiver> --log dns.jsonl \
+      --redirect '*.googleapis.com' --redirect googleapis.com --redirect time.google.com
+  ```
+
+  Without `--redirect` it redirects only the two `googleapis.com` patterns, not
+  `time.google.com`.
 
 On a network other than `192.168.2.x`, give the receiver the controller's address, or any
 address on its network, with `--controller-ip` (default `192.168.2.2`): the receiver takes its
@@ -56,7 +66,7 @@ Caveat: when a redirected name gets NXDOMAIN the firmware falls back to `8.8.8.8
 the real host through the NAT, which is why `--clearcut-block tls` (fail the TLS handshake)
 is preferred over `--clearcut-block dns` (see [protocol.md](protocol.md#7-clearcut-and-the-power-off)).
 
-Ports used by the receiver (all configurable):
+Ports used by the receiver:
 
 | port | protocol | purpose |
 |---|---|---|
@@ -70,15 +80,19 @@ Ports used by the receiver (all configurable):
 
 On Linux, binding the ports below 1024 needs root, or `CAP_NET_BIND_SERVICE` granted to the
 interpreter binary (`setcap cap_net_bind_service=+ep` on the file `.venv/bin/python3` links to).
+Port 53 is often held already, by systemd-resolved or dnsmasq (NetworkManager runs one for a
+hotspot it shares): the DNS sink then exits, and its `helper_exited` record says so.
 
 On Windows, the Windows Time service holds UDP 123 while it runs, and the SNTP server cannot
 start until it is stopped: `Stop-Service w32time` in an administrator PowerShell (Windows
-starts it again at the next boot).
+starts it again at the next boot). `--no-sntp` runs without the SNTP server instead; the
+firmware also takes the time from the receiver's HTTP `Date` header and `GetCurrentTime`
+replies ([protocol.md](protocol.md#8-time)).
 
 On Windows, when the controller sits on another subnet than the PC (a dedicated Wi-Fi network
-routed to it), Windows Defender Firewall drops the inbound traffic by default: allow UDP 53,
-TCP 443 and the UDP range of the WebRTC ports (40000 and up, two per controller). A blocked
-game port shows as a steady white controller whose StartGame fails after a few seconds.
+routed to it), Windows Defender Firewall drops the inbound traffic by default: allow UDP 53
+and 123, TCP 443 and the UDP range of the WebRTC ports (40000 and up, two per controller). A
+blocked game port shows as a steady white controller whose StartGame fails after a few seconds.
 
 ## Certificate
 
@@ -115,10 +129,11 @@ Copy `fullchain.pem` (the full chain: the intermediate matters) and `privkey.pem
 
 ## Running
 
-`tools/start_receiver.sh` starts the receiver with `--preset live`, a fresh run directory
-`captures/<stamp>/` and a packet capture of the whole hotspot interface when `/dev/bpf*` is
-readable (`sudo chmod o+rw /dev/bpf*` once; `PCAP=0` skips it, `PCAP_FILTER` narrows it). It
-reads the rig settings from the environment or from a `.env` file at the repo root (see
+`tools/start_receiver.sh` starts the receiver in the background with `--preset live` and a
+fresh run directory `captures/<stamp>/`. On macOS it adds a packet capture of the whole
+hotspot interface (`IFACE`) when `/dev/bpf*` is readable, which `sudo chmod o+rw /dev/bpf*`
+makes it until the next boot; `PCAP=0` skips the capture, `PCAP_FILTER` narrows it. It reads
+the rig settings from the environment or from a `.env` file at the repo root (see
 `.env.example`), and passes any extra arguments on to the receiver, where they override the
 preset:
 
@@ -135,7 +150,7 @@ The run directory contains:
 | `server.out` | the console echo of the log (one compact line per event) |
 | `bodies/` | every request body the controller sent, as raw bytes |
 | `dns.jsonl`, `sntp.jsonl` | the helper processes' logs |
-| `bridge100.pcap` | the packet capture, when enabled |
+| `<IFACE>.pcap` | the packet capture (macOS), when enabled |
 
 `GET http://<receiver>/_status` returns the live state as JSON: per controller its session,
 battery level, headset and headset stream (`playback`), and with `--gamepad` every virtual pad
