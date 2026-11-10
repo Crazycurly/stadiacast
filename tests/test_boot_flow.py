@@ -11,7 +11,7 @@ import pytest
 from stadiacast.protos import Protos
 from stadiacast.rtc import WIRE_ID_DC_RPC_DISPLAY, pack_wire_message
 from tests.fake_controller import FakeController
-from tests.helpers import connect_firmware_flow, http_records, make_receiver, no_log, single
+from tests.helpers import connect_firmware_flow, fake, http_records, make_receiver, no_log, single, wait_for
 
 
 def test_firmware_flow_offer_in_discover_display_answer_via_gmsg(tmp_path):
@@ -201,7 +201,9 @@ def test_second_boot_resets_the_ack_release_clock(tmp_path):
                     assert single(rx)._dtls_at is not None
                     assert single(rx)._dtls_at > t0 - 0.1
                     assert t1 - t0 >= 0.1
-                    assert abs((t1 - single(rx)._dtls_at) - 0.2) < 0.08
+                    # released 0.2 s after DTLS, not at once and not at the end of the 20 s hold (the
+                    # answer still has to reach this side, so only the lower bound is tight)
+                    assert 0.19 < t1 - single(rx)._dtls_at < 5
             resets = [r for r in rx.log.records if r["event"] == "boot_state_reset"]
             assert len(resets) == 1
             assert resets[0]["previous_dtls"] is True
@@ -348,3 +350,33 @@ def test_fake_controller_drops_0xfffa_framed_rpc_like_the_firmware():
     assert fc.wire_dropped == 1
     assert sent == [0x74]  # the controller answers on its own SendDataAsync id
     fc.close()
+
+
+def test_a_client_hello_that_arrives_after_the_receiver_began_its_own_handshake_is_answered(tmp_path):
+    """With ``dtls_role`` "auto" (the command's default) the receiver starts the DTLS handshake
+    itself when the controller's first flight has not come half a second after the pair was
+    selected.  The controller is a client too: the receiver then answers its ClientHello as the
+    server, where two clients would retransmit at each other until the boot times out."""
+
+    async def run():
+        rx = make_receiver(tmp_path, dtls_role="auto")
+        await rx.start()
+        fc = fake(rx, "fake-late")
+        try:
+            await fc.boot()
+            ctl = single(rx)
+            ctl.endpoint.dtls_client_delay = 0.02
+            await fc.start_udp()
+            await fc.discover()  # the receiver checks the pair, the fake answers: the delay starts
+            await wait_for(lambda: ctl.endpoint.dtls is not None and ctl.endpoint.dtls.role == "client")
+            await fc.poll_gmsg()
+            await fc.poll_gmsg()
+            fc.connect()
+            await fc.wait_connected(5)
+            assert ctl.endpoint.dtls.role == "server" and ctl.endpoint.connected.is_set()
+            assert [r["role"] for r in rx.log.records if r["event"] == "dtls_role_switch"] == ["server"]
+        finally:
+            fc.close()
+            await rx.stop()
+
+    asyncio.run(run())

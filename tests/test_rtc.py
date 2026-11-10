@@ -234,3 +234,36 @@ def test_fast_ice_checks_until_dtls():
     # fast: a check every 0.1 s while no DTLS session exists
     assert _binding_requests_sent_after_pairing(0.1, 0.55) >= 5
 
+
+# ---- a peer that went away -----------------------------------------------------
+
+
+def test_checks_a_vanished_peer_never_answers_are_forgotten(monkeypatch):
+    async def run() -> None:
+        clock = [1000.0]
+        monkeypatch.setattr("stadiacast.rtc.endpoint.time.monotonic", lambda: clock[0])
+        ep = RtcEndpoint(cert=DtlsCertificate(), controlling=False, dtls_role="server")
+        ep.connection_made(_CaptureTransport())
+        ep.set_remote("ctrl", "controller-password-0123", None)
+        ep.remote.verified_out = True  # keepalive checks: no retries scheduled
+        for _ in range(100):
+            ep._send_check(("192.168.2.2", 49153), attempt=99)
+            clock[0] += 2.5
+        assert len(ep._checks) == 13  # the last 30 s of them, not all hundred
+        ep.close()
+
+    asyncio.run(run())
+
+
+def test_socket_errors_in_a_row_are_logged_a_few_times_then_one_in_a_hundred():
+    logged: list[int] = []
+    ep = RtcEndpoint(
+        cert=DtlsCertificate(),
+        log=lambda event, **f: logged.append(f["in_a_row"]) if event == "rtc_socket_error" else None,
+    )
+    for _ in range(250):
+        ep.error_received(OSError(64, "Host is down"))
+    assert logged == [1, 2, 3, 100, 200]
+    ep.datagram_received(b"\0\0", ("192.168.2.2", 49153))  # the peer is back: the next error is news again
+    ep.error_received(OSError(64, "Host is down"))
+    assert logged[-1] == 1

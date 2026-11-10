@@ -54,6 +54,11 @@ from stadiacast.rtc.wire import WIRE_ID_RTP, pack_wire_message
 #: A peer address as asyncio hands it to us.
 Addr = tuple[str, int]
 
+#: Seconds a connectivity check waits for its answer before it is forgotten.
+CHECK_LIFETIME = 30.0
+#: After this many socket errors in a row, only every hundredth is logged.
+SOCKET_ERRORS_LOGGED = 3
+
 
 def _noop(*_args: Any, **_kwargs: Any) -> None:
     """Default for every optional callback."""
@@ -151,6 +156,7 @@ class RtcEndpoint(asyncio.DatagramProtocol):
         self._dtls_timer_handle: asyncio.TimerHandle | None = None
         self._keepalive_handle: asyncio.TimerHandle | None = None
         self._last_addr: Addr | None = None
+        self._socket_errors = 0  # in a row: a peer that went away answers every datagram with one
         self.stats: dict[str, int] = {
             "stun_in": 0,
             "stun_out": 0,
@@ -188,7 +194,9 @@ class RtcEndpoint(asyncio.DatagramProtocol):
         )
 
     def error_received(self, exc: Exception) -> None:
-        self.log("rtc_socket_error", name=self.name, error=repr(exc))
+        self._socket_errors += 1
+        if self._socket_errors <= SOCKET_ERRORS_LOGGED or self._socket_errors % 100 == 0:
+            self.log("rtc_socket_error", name=self.name, error=repr(exc), in_a_row=self._socket_errors)
 
     def connection_lost(self, _exc: Exception | None) -> None:
         self._socket_closed.set()
@@ -281,7 +289,10 @@ class RtcEndpoint(asyncio.DatagramProtocol):
             msg.add(ATTR_USE_CANDIDATE, b"")
         else:
             msg.add(ATTR_ICE_CONTROLLED, self.tiebreaker)
-        self._checks[msg.txid] = (addr, time.monotonic())
+        now = time.monotonic()
+        for txid in [t for t, (_, sent) in self._checks.items() if now - sent > CHECK_LIFETIME]:
+            del self._checks[txid]  # never answered: a peer that is gone would fill the table
+        self._checks[msg.txid] = (addr, now)
         self._send(msg.encode(self.remote.pwd.encode()), addr)
         self.stats["stun_out"] += 1
         if attempt < 7 and not self.remote.verified_out:
@@ -451,6 +462,14 @@ class RtcEndpoint(asyncio.DatagramProtocol):
     def _handle_dtls(self, data: bytes, addr: Addr) -> None:
         self.stats["dtls_in"] += 1
         self._last_addr = addr
+        if self._both_started_as_client(data):
+            # dtls_role "auto" starts the handshake itself when the peer's ClientHello is late; a
+            # peer that then sends one is a client too, and two clients never finish: answer it.
+            self.log("dtls_role_switch", name=self.name, peer=addr, role="server")
+            if self._dtls_timer_handle:
+                self._dtls_timer_handle.cancel()
+                self._dtls_timer_handle = None
+            self.dtls = None
         if self.dtls is None:
             if data[0] != 22:  # not a handshake record: nothing to attach it to
                 self.log("dtls_record_without_session", name=self.name, peer=addr, content_type=data[0])
@@ -488,6 +507,19 @@ class RtcEndpoint(asyncio.DatagramProtocol):
         if self.dtls.closed:
             self.log("dtls_closed_by_peer", name=self.name)
             self.on_state("dtls-closed", {})
+
+    def _both_started_as_client(self, record: bytes) -> bool:
+        """Whether ``record`` is a ClientHello arriving while our own client handshake, started on
+        ``dtls_role`` "auto", has not completed."""
+        return (
+            self.dtls is not None
+            and self.dtls_role == "auto"
+            and self.dtls.role == "client"
+            and not self.dtls.handshake_complete
+            and len(record) > 13
+            and record[0] == 22  # a handshake record, whose 13-byte header the message type follows
+            and record[13] == 1  # ClientHello
+        )
 
     def _on_dtls_complete(self) -> None:
         assert self.dtls is not None
@@ -645,6 +677,7 @@ class RtcEndpoint(asyncio.DatagramProtocol):
 
     # ---- demux ---------------------------------------------------------------
     def datagram_received(self, data: bytes, addr: tuple[str | Any, int]) -> None:
+        self._socket_errors = 0
         kind = classify_datagram(data)
         if kind == "stun":
             self._handle_stun(data, addr)
