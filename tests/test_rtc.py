@@ -119,6 +119,32 @@ def test_rtp_build_parse():
     assert classify_datagram(bytes([22, 254, 253]) + b"\0" * 20) == "dtls"
 
 
+@pytest.mark.parametrize(
+    "packet",
+    [
+        pytest.param(b"\x80\x60" + b"\0" * 9, id="shorter than the fixed header"),
+        pytest.param(b"\x40\x60" + b"\0" * 10, id="not version 2"),
+        pytest.param(b"\x82\x60" + b"\0" * 10 + b"\0" * 7, id="two CSRCs announced, seven bytes follow"),
+        pytest.param(b"\x8f\x60" + b"\0" * 10, id="fifteen CSRCs announced, none follow"),
+        pytest.param(b"\x90\x60" + b"\0" * 10 + b"\xbe\xde\x00", id="extension bit, three bytes follow"),
+        pytest.param(b"\x90\x60" + b"\0" * 10 + b"\xbe\xde\x00\x02" + b"\0" * 7, id="extension one byte short"),
+        pytest.param(b"\x91\x60" + b"\0" * 10 + b"\0" * 4 + b"\xbe\xde", id="extension header cut after the CSRC"),
+    ],
+)
+def test_rtp_parse_rejects_a_header_that_overruns_the_packet(packet):
+    """Bytes that only look like RTP are a ValueError, the one exception the callers handle."""
+    with pytest.raises(ValueError):
+        parse_rtp(packet)
+
+
+def test_rtp_parse_reads_the_csrc_list_and_strips_padding():
+    header = bytes([0xA2, 0x60]) + (7).to_bytes(2, "big") + (9).to_bytes(4, "big") + (0xAABBCCDD).to_bytes(4, "big")
+    p = parse_rtp(header + (1).to_bytes(4, "big") + (2).to_bytes(4, "big") + b"data" + b"\0\0\x03")
+    assert (p.seq, p.timestamp, p.ssrc, p.csrcs, p.padding) == (7, 9, 0xAABBCCDD, [1, 2], True)
+    assert p.payload == b"data"
+    assert p.header_len == 20
+
+
 # ---- DTLS loopback -----------------------------------------------------------
 
 

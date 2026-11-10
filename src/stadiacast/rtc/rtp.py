@@ -70,6 +70,8 @@ def parse_header_extensions(profile: int, data: bytes) -> list[tuple[int, bytes]
 
 
 def parse_rtp(data: bytes) -> RtpPacket:
+    """Parse an RTP packet.  Anything that is not one raises ``ValueError``: the callers try this
+    on datagrams and sub-channel messages of unknown content and fall back on that."""
     if len(data) < 12:
         raise ValueError("short RTP packet")
     b0, b1 = data[0], data[1]
@@ -77,18 +79,21 @@ def parse_rtp(data: bytes) -> RtpPacket:
         raise ValueError("RTP version != 2")
     cc = b0 & 0x0F
     seq, ts, ssrc = struct.unpack_from("!HII", data, 2)
-    off = 12
-    csrcs = [struct.unpack_from("!I", data, off + 4 * i)[0] for i in range(cc)]
-    off += 4 * cc
+    off = 12 + 4 * cc
+    if off > len(data):
+        raise ValueError("RTP CSRC list longer than packet")
+    csrcs = list(struct.unpack_from(f"!{cc}I", data, 12))
     ext_profile: int | None = None
     extensions: list[tuple[int, bytes]] = []
     if b0 & 0x10:
+        if off + 4 > len(data):
+            raise ValueError("RTP header extension longer than packet")
         ext_profile, ext_len = struct.unpack_from("!HH", data, off)
         ext_data = data[off + 4 : off + 4 + 4 * ext_len]
         off += 4 + 4 * ext_len
+        if off > len(data):
+            raise ValueError("RTP header extension longer than packet")
         extensions = parse_header_extensions(ext_profile, ext_data)
-    if off > len(data):
-        raise ValueError("RTP header longer than packet")
     payload = data[off:]
     if b0 & 0x20 and payload:
         pad = payload[-1]
