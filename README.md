@@ -17,7 +17,9 @@ own PC: it joins your Wi-Fi, connects, stays on, reports every button, stick and
 vibrates on request and plays sound on its headset jack.
 
 > **Status:** works end to end on the controller's last Wi-Fi firmware, `ota.282115`, with
-> several controllers at once. Expect rough edges; issues and pull requests are very welcome.
+> several controllers at once. Expect rough edges. Questions go to
+> [Discussions](https://github.com/jkfran/stadiacast/discussions), bugs to the
+> [issues](https://github.com/jkfran/stadiacast/issues); pull requests are very welcome.
 > Switched your controller to Bluetooth mode? It comes back, see [Requirements](#requirements).
 
 ## Key features
