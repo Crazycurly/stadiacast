@@ -88,8 +88,10 @@ proves the model. When you have one:
   in `docs/protocol.md`.
 - Wire-visible strings (placeholder ids, `Server` header, SDP build number) are part of the
   tested protocol surface; change them deliberately.
-- New configuration is a `Config` field with a comment, a CLI flag in `cli.py` in the matching
-  argument group, and a line in the CHANGELOG.
+- New configuration is a `Config` field with a comment, a CLI flag in the matching argument
+  group of `cli.build_parser`, its entry in the `Config(...)` call of `cli.parse_args`, which
+  maps and renames the parsed flags (a flag left out of it is parsed and ignored), and a line in
+  the CHANGELOG.
 
 ### Schemas
 

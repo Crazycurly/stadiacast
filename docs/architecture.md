@@ -15,18 +15,23 @@ that has no interpreter to run `-m` with, the executable itself with `--helper <
 | process | module | why separate |
 |---|---|---|
 | the receiver | `stadiacast.cli` → `stadiacast.receiver` | HTTPS/HTTP listeners, every controller's UDP sockets, the event log |
-| DNS sink | `stadiacast.helpers.dns_sink` | binds port 53; answers `*.googleapis.com` and the `--dns-redirect` names with the receiver's IP, forwards everything else |
+| DNS sink | `stadiacast.helpers.dns_sink` (wire format: `helpers.dnswire`) | binds port 53; answers `*.googleapis.com` and the `--dns-redirect` names with the receiver's IP, forwards everything else |
 | SNTP server | `stadiacast.helpers.sntp_server` | binds port 123; answers `time.google.com` with the host clock |
 
 The helpers are plain blocking servers in their own processes so they keep answering while the
 receiver's event loop is busy, and so the privileged-looking ports are isolated. The receiver
 watches them: one that exits is logged (`helper_exited`) with the last lines it wrote.
 
+Two more commands run on their own: `stadiacast-provision` (`ble_provisioner.py`) sends a
+controller in Bluetooth setup mode its Wi-Fi credentials, and `stadiacast-show-input`
+(`show_input.py`) summarizes the input recorded in a run directory.
+
 ## Objects
 
 ```
 Receiver                                   one per process (receiver.py)
  ├── HttpServer                            HTTPS :443 + HTTP :80/:8008, SNI callback (http_server.py)
+ ├── TLS credential                        built-in, your own or a lab pair; the clock pin (certs.py)
  ├── Protos                                the protobuf schemas, loaded once (protos.py)
  ├── EventLog                              server.jsonl + console echo (log.py)
  ├── VirtualGamepads                       --gamepad: one virtual pad per controller (virtual_gamepad.py)
@@ -35,6 +40,7 @@ Receiver                                   one per process (receiver.py)
       │    ├── StunMessage / ICE checks    rtc/stun.py
       │    ├── DtlsSession + DtlsCertificate   rtc/dtls.py
       │    ├── SrtpContext (in / out)      rtc/srtp.py
+      │    ├── RtpPacket parse / build     rtc/rtp.py
       │    └── WireHeader2 framing         rtc/wire.py
       ├── display RPC state machine        GetControllerState → READY → input (controller.py)
       ├── InputDecoder                     InputProtocolMessage stream (input_protocol.py)
@@ -50,6 +56,8 @@ requests (`_route`), answers the boot-time endpoints itself (Omaha, Clearcut, an
 connectivity check and `stadiaconfig` when their names are redirected to it, which the default
 DNS sink does not do) and hands everything that identifies a controller to that controller's
 session. It is also the registry: `controller_for()` finds or creates the session for a request.
+Its own address towards the controller and the `stadiaconfig` fetch come from `netutil.py`,
+which the helpers share for the message on a port that is taken.
 
 **`ControllerSession`** is one controller as the receiver sees it: the discovery RPCs
 (`register`, `discover`), the GMsg queue and long poll (`queue_gmsg`, `gmsg_poll`), the
@@ -147,14 +155,15 @@ The whole path runs without hardware: `tests/fake_controller.py` reproduces the 
 network behaviour (HTTPS boot, signaling, STUN, DTLS, the display RPC state machine, the game
 session and the haptics watchdog), and the end-to-end tests drive a receiver on loopback with
 ephemeral ports and a self-signed certificate (`tests/helpers.py`). The same fake runs by hand
-against a receiver started in lab mode (see the README). Against a real controller the receiver
-runs with `--preset live` on ports 53/80/123/443, which `tools/start_receiver.sh` sets up.
+against a receiver started in lab mode ([CONTRIBUTING.md](../CONTRIBUTING.md#tests)). Against a
+real controller the receiver runs with `--preset live` on ports 53/80/123/443, which
+`tools/start_receiver.sh` sets up.
 
 ## Where to add things
 
 | change | where |
 |---|---|
-| a new knob | a `Config` field, a flag in the matching group of `cli.py`, a CHANGELOG line |
+| a new knob | a `Config` field, a flag in the matching group of `cli.build_parser`, its entry in the `Config(...)` call of `cli.parse_args` (which maps and renames the parsed flags; a flag left out of it is ignored), a CHANGELOG line |
 | a new boot-time endpoint | `Receiver._route` and a handler next to `_omaha` / `_clearcut` |
 | a new display RPC the controller sends | `ControllerSession._answer_request` |
 | a new message on the game session | `GameSession._on_app_data` / `_on_rpc` |
