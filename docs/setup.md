@@ -201,7 +201,7 @@ Events worth knowing when something does not work:
 
 | event | meaning |
 |---|---|
-| `tls_handshake_failed` with `UNKNOWN_CA` | the controller rejected the certificate: not a GTS chain, or the key does not match |
+| `tls_alert` with `UNKNOWN_CA` | the controller rejected the certificate: not a GTS chain |
 | no `tcp_accept` at all | the controller is not resolving names through the receiver (check `dns.jsonl`) |
 | `gmsg_unattributed` | a `/gmsg` poll from a controller that never registered with this receiver process (it will register on its next boot) |
 | `http_request` to `/log/batch` then silence | the Clearcut power-off; make sure the `live` preset (`clearcut_block=tls`) is active |

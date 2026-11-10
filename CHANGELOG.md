@@ -6,9 +6,18 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+Provisioning that says how it ended and works without the controller's Wi-Fi scan, a receiver
+that lets go of a controller that was switched off, and limits on what one request, datagram or
+device on the network can cost it.
+
 ### Added
-- When the controller cannot join the network, `stadiacast-provision provision` says so and
-  what to check: the network name, the password, `--wifi-scan`.
+- `stadiacast-provision provision` ends with the outcome: `Done` once the controller reported
+  that it joined or dropped the Bluetooth link (which it does on leaving setup mode), and an
+  error that says what to check when it reported a failure or gave no sign of joining.
+- `--service-data-match` finds the controller without `--address`.
+- A `tls_alert` record in the log when a client refuses the certificate, with the alert it sent
+  (`UNKNOWN_CA` for a chain the controller does not accept).
+- The protocol notes describe the Bluetooth setup service.
 
 ### Changed
 - `stadiacast-provision provision` no longer has the controller scan for Wi-Fi networks first:
@@ -16,16 +25,64 @@ All notable changes to this project are documented here. The format follows
   the controller finds the network by itself. This works on controllers that drop the Bluetooth
   link a few seconds after that scan. `--wifi-scan` brings the scan back, for networks with
   other security; `--wpa-auth` and `--wpa-cipher` set it by hand.
+- `stadiacast-provision` exits with status 1 when the provisioning failed and 130 when
+  interrupted, and refuses credentials no network can have (a name over 32 bytes, a WPA
+  password outside 8 to 63 characters) before it touches Bluetooth.
+- A controller that is switched off closes its link, and the receiver now lets go of it: no
+  more reports and checks to its address, its headset stream stops and its virtual pad is
+  unplugged, until its next boot.
+- The control endpoints (`/_rumble`, `/_start_game`, `/_audio`) refuse what a browser sends on
+  behalf of a web page: any request other than `GET` that carries an `Origin` header.
+- A `file:` audio source has to be a file of this computer; a URL is refused.
+- `--self-signed` with `--cert` and `--key` creates the lab pair only when both files are
+  missing. One of them without the other is an error instead of being written over.
+- An HTTP request has the idle timeout for its body and for its response to be taken, not only
+  for its head, and the receiver serves 128 connections at a time.
+- In the log: a run of `rtc_socket_error` records is written three times and then once in a
+  hundred, `rtc_stats` only when something came in, and a request body is decoded up to its
+  first 16 KiB (the whole body is in `bodies/` as before).
+- pyOpenSSL 24.3 or newer is required; older versions failed at the first DTLS session.
+- `tools/start_receiver.sh` lets the receiver detect its own address unless `ADVERTISE_IP` is
+  set, shows the settings in effect and cleans up after a receiver that does not come up.
+  `tools/stop_receiver.sh` stops the processes its pid files name, after checking what they
+  are, and no longer every receiver on the machine.
 
 ### Fixed
+- `stadiacast-provision` failed on Linux at every provisioning, refusing the credentials as too
+  large for a Bluetooth packet size that BlueZ does not report.
 - With `--wifi-scan`, `stadiacast-provision` reads the controller's public key before it starts
   the scan: some controllers drop the Bluetooth link a few seconds after that scan, and the key
   was the longest read left after it.
-- `stadiacast-provision` reads windows of up to 24 pages instead of 16, and a window that
-  arrives cut short now ends it with one line asking to run it again, instead of a traceback.
-- A Bluetooth failure (a dropped link, a timeout, Bluetooth turned off) ends
-  `stadiacast-provision` with one line instead of a traceback, and when the link drops after the
-  Wi-Fi scan it says to run it again without `--wifi-scan`.
+- `stadiacast-provision` reads windows of up to 24 pages instead of 16. What used to end in a
+  traceback ends in one line: a window that arrives cut short, a Bluetooth failure, a key that
+  is not an RSA key, scan results of another shape.
+- A password typed at the prompt keeps its leading and trailing spaces.
+- With eight controllers known, a ninth got an error on its first request, and the session
+  forgotten to make room was the one in use, since only HTTP requests counted as activity.
+  Requests of one controller that arrived together could open several sessions for it.
+- The receiver's memory grew with every input event for as long as it ran, about 100 MiB per
+  controller and hour of play.
+- With `--dtls-role auto`, the default without the preset, the handshake could not complete
+  when the controller's first packet came more than half a second after the pair was selected.
+- On Windows, Ctrl-C left the helper processes, a running headset stream and the virtual pads
+  behind; so did a start that failed half way on any system.
+- The headset stream: a volume change while the stream was starting could leave two streams
+  running; a controller that rebooted during a restart left a stream nobody could stop; a
+  stream stopped while its sound device was opening left the device open; and an ffmpeg that
+  could not run was started again twice a second for good.
+- Malformed input could do more than be dropped: an Omaha request, a compressed input series
+  or a DNS message could hold the receiver or its DNS sink for seconds to minutes, an ICE
+  candidate with an invalid port closed that controller's socket for good, and a malformed
+  STUN or RTP header raised an error instead of being ignored.
+- A certificate that could not be loaded was reported as port 443 being held by another
+  program; the error names the files. A port that needs privileges says so.
+- `stadiacast-provision --help` and `stadiacast-show-input --help` are plain text, and a bad
+  value for `--http-ports`, `--rpc-wire-id`, `--rpc-fields` or `--offer-json` is reported with
+  the flag it was given to.
+- On PyPI, the links in the project description lead to the files of the release on GitHub.
+- The README and the setup guide said that nothing leaves the network: the controller still
+  makes two requests to Google at boot, its connectivity check and its configuration, which the
+  DNS sink forwards. They also say now what to set on a network other than `192.168.2.x`.
 
 ## [1.0.1] - 2026-11-07
 
