@@ -247,11 +247,13 @@ by hand instead, without the scan: `--wpa-auth` and `--wpa-cipher` take the valu
 `--help`.
 
 **What to expect on the first boot:** the controller joins the Wi-Fi, blinks white, resolves
-the Google names through the receiver and registers with it (`controller_new` in the log), but
-a controller that has never been linked stops there. It registers a second time, then idles
-(pinging the gateway every two seconds) until it powers itself off after a few minutes. Wake it
-again: the second boot takes the normal autolinking path and connects (two short rumbles,
-steady white). No link code has to be typed.
+the Google names through the receiver and, within a minute of taking the credentials, registers
+with it (`controller_new` in the log). That boot never connects, whether or not the controller
+was linked before: the light keeps blinking white, and button presses only make it rumble. Give
+it that minute, then turn the controller off (hold the Stadia button until the light goes out)
+and wake it again: the second boot takes the normal autolinking path and connects (two short
+rumbles, steady white). No link code has to be typed. Left alone, the controller turns itself
+off about six minutes after it registered, and its next wake connects the same way.
 
 On macOS, Bluetooth addresses are CoreBluetooth UUIDs that can change between runs;
 `--service-data-match HEX` finds the device by a fragment of its Fast Pair service data instead

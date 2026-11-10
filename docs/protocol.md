@@ -47,9 +47,10 @@ refuses to proceed without the field.
   client_flag}`. The receiver answers **RegisterControllerResponse** with a placeholder
   `registration_id`, `poll_interval_ms = 1000` (required, must be > 0) and a
   `registration_token`. When the request carries a resumed `discovery` (the *autolinking*
-  boot of an already-linked controller: `resume = true` plus the SDP offer, seen on every
-  live boot so far), the response must also carry the `display {display_id, display_token}`
-  oneof, otherwise the controller logs to Clearcut and powers down.
+  boot: `resume = true` plus the SDP offer, sent on every live boot so far, by a controller
+  that was never linked too), the response must also carry the `display {display_id,
+  display_token}` oneof, otherwise the controller logs to Clearcut and powers down. A request
+  without a `discovery` must be answered without it (§11).
 - **DiscoverDisplayRequest** `{device_id, typed_keys | resume, sdp_offer_bundle, app_id,
   attempt_id, …}`. Field 4 is a serialized `WebRtcSdpAndIceCandidates` with `sdp.type =
   SDP_OFFER`: **the controller is the WebRTC offerer.** The receiver records the offer, builds
@@ -297,9 +298,8 @@ The firmware identifies itself in these places, all confirmed live:
 | `GmsgPollRequest.subscription` | the `display_token` the receiver answered with |
 
 A controller that has never been linked sends `client_flag = true` in its registration (a
-linked one sends `false`). On its first boot after Wi-Fi provisioning it registers with the
-embedded offer, registers again without it, and then idles until it powers off; the next boot
-proceeds like a linked controller's autolinking boot and connects. No link code is involved.
+linked one sends `false`). Its boots are otherwise the same, the one after Wi-Fi provisioning
+included (§11).
 
 The receiver keeps one session per controller, created at the first identified request and
 found again by any of those ids, by the display token, or by the peer address as a last
@@ -351,14 +351,34 @@ scan entry, may be added; without them the controller finds the network by its n
 `0x1e` (connecting), then `0x3c` (connected) or `0x4f` (the credentials were refused or the
 join failed); `0x34` and `0x4e` report JSON the controller could not parse. A controller that
 joined leaves setup mode and drops the Bluetooth link a few seconds after `0x1e`, often without
-sending `0x3c` first, so the dropped link is the sign of success to rely on.
+sending `0x3c` first, so the dropped link is the sign of success to rely on. When the link
+lasts longer, an OTA status (`{"ota_status": 2, "ready_to_apply": false}`) and a state `0x46`
+have followed `0x3c`; what `0x46` stands for is not known.
 
 **The scan.** Some controllers (seen with firmware build 316382) drop the Bluetooth link a few
 seconds after the scan that a write to the settings characteristic starts, before credentials
 copied from its results can be written. `stadiacast-provision` therefore leaves the scan out
 unless `--wifi-scan` asks for it, and reads the key before the scan when it does.
 
-The first boot after provisioning is described in §10.
+**The boot after provisioning.** With the credentials the controller joins and runs its network
+check: `generate_204`, `stadiaconfig`, the Omaha update check, a Clearcut upload. About half a
+minute later it joins again and a boot like any other begins: Clearcut,
+`FirmwareVersionCheck`, `RegisterController` with the resumed discovery and the offer. This one
+boot then leaves the usual path, whether or not the controller was ever linked. It resolves the
+GMsg name but never polls it, and half a second after the first registration it registers
+again without a `discovery` (`device_id`, a new `attempt_id`, `client_flag`). The answer to its
+offer is never fetched. The light blinks white, and button presses make the controller rumble
+and send nothing. Left alone it sends `ResolveDiscovery` 300 s after the registration and an
+Omaha check 75 s later, then sleeps. Its next boot, after that or after it was turned off by
+hand, is an ordinary autolinking boot and connects; no link code is involved.
+
+That second registration has to be answered without the `display` oneof. In one live run with
+the oneof in that response the controller polled GMsg at once and took the answer to the first
+registration's offer. Its ICE checks then came from another UDP port than that offer's
+candidate, it answered none of the receiver's checks and sent no DTLS record; 15 s later it
+sent `ResolveDiscovery` and went back to setup mode (orange light, one rumble) while staying on
+the network. The second registration, it seems, opens a peer connection of its own whose offer
+is never sent.
 
 ## 12. Confirmed versus assumed
 
@@ -385,6 +405,8 @@ The first boot after provisioning is described in §10.
 - Omaha and Clearcut message formats.
 - The Bluetooth setup service of §11: the windowed reads, the key, the credentials and the
   states, on networks with WPA2-PSK and CCMP.
+- The boot after provisioning of §11, on a controller that was linked before and on one that
+  never was.
 - The certificate check: the chain must lead to a GTS root; hostname, validity dates and
   revocation are not checked (§8).
 
@@ -394,6 +416,8 @@ The first boot after provisioning is described in §10.
   the placeholder ids and tokens in `RegisterControllerResponse` and `DiscoverDisplayResponse`
   only need to satisfy the firmware's required-field checks.
 - The answer bundle delivery and re-send policy on GMsg.
+- `DiscoverDisplay` as a request of its own, for a link code typed on the controller: no live
+  boot has sent one. Every offer so far came inside `RegisterController`.
 - The input RTP payload type (96) and the ack format (`InputProtocolMessage` with only
   `ack_sequence_number`, sent on our own SSRC).
 - What the game session's RPC requests mean (they are answered with an empty OK).

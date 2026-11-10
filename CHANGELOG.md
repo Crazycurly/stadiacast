@@ -48,6 +48,9 @@ device on the network can cost it.
   are, and no longer every receiver on the machine.
 
 ### Fixed
+- The setup guide tied the boot that never connects after provisioning to controllers that were
+  never linked. Every controller does it, and the guide now says to turn the controller off and
+  wake it instead of waiting for it to switch itself off.
 - `stadiacast-provision` failed on Linux at every provisioning, refusing the credentials as too
   large for a Bluetooth packet size that BlueZ does not report.
 - With `--wifi-scan`, `stadiacast-provision` reads the controller's public key before it starts
