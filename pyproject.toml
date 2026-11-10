@@ -1,12 +1,11 @@
 [build-system]
-requires = ["hatchling>=1.27"]
+requires = ["hatchling>=1.27", "hatch-fancy-pypi-readme>=23.2"]
 build-backend = "hatchling.build"
 
 [project]
 name = "stadiacast"
-dynamic = ["version"]
+dynamic = ["version", "readme"]
 description = "A local server for the Stadia Controller's Wi-Fi mode: keeps the controller working with your own PC after the Stadia shutdown"
-readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.11"
@@ -65,6 +64,22 @@ stadiacast-show-input = "stadiacast.show_input:main"
 
 [tool.hatch.version]
 path = "src/stadiacast/__init__.py"
+
+# The README is also the PyPI description, where its relative links have no repository around
+# them: they become links to the release's tag on GitHub. In-page anchors and absolute URLs stay.
+[tool.hatch.metadata.hooks.fancy-pypi-readme]
+content-type = "text/markdown"
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.fragments]]
+path = "README.md"
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
+pattern = '\]\((?![a-z][a-z0-9+.-]*:|#)([^)\s]+)\)'
+replacement = '](https://github.com/jkfran/stadiacast/blob/v$HFPR_VERSION/\1)'
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
+pattern = 'href="(?![a-z][a-z0-9+.-]*:|#)([^"]+)"'
+replacement = 'href="https://github.com/jkfran/stadiacast/blob/v$HFPR_VERSION/\1"'
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/stadiacast"]
