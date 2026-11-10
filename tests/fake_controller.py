@@ -66,6 +66,8 @@ OMAHA_REQUEST = (
     "</app></request>"
 )
 
+AUDIO_MODE_WEBRTC_OPUS = 2  # the SetAudioModeRequest mode whose route reaches the headset jack
+
 
 class FakeController:
     def __init__(
@@ -142,6 +144,7 @@ class FakeController:
         # payload type tells them apart (the ACKs use --input-payload-type, 96 by default).
         self.audio_frames: list[RtpPacket] = []
         self.audio_payload_type = 111
+        self.audio_route_open = False  # SetAudioModeRequest mode 2 was accepted in this boot
         self.headset_plugged = False  # GetControllerStateResponse.f4
         self.serial_number = "FAKESERIAL0001"  # GetControllerStateResponse.f17
         self.start_game_requests: list[dict] = []  # DisplayToController #8 StartGame {ticket, key, number}
@@ -268,6 +271,8 @@ class FakeController:
                 self._on_get_controller_state(rpc["ticket"])
             elif msg.HasField("start_game") and self.dc_state == "ready":
                 self._on_start_game(rpc["ticket"], msg.start_game)
+            elif msg.HasField("set_audio_mode") and msg.set_audio_mode.mode == AUDIO_MODE_WEBRTC_OPUS:
+                self._on_set_audio_mode(rpc["ticket"])
             else:
                 self.endpoint.send_wire(
                     WIRE_ID_DC_RPC_CONTROLLER,
@@ -281,6 +286,22 @@ class FakeController:
             fut = self._rpc_pending.pop(rpc["ticket"], None)
             if fut is not None and not fut.done():
                 fut.set_result(rpc)
+
+    def _on_set_audio_mode(self, ticket: int) -> None:
+        """SetAudioModeRequest with the WebRTC Opus mode opens the route to the headset jack for the
+        rest of the boot: the first request is answered OK and a repeat FAILED_PRECONDITION, while
+        the frames keep playing either way.  The other modes are not modelled."""
+        p = self.protos
+        if self.audio_route_open:
+            response = p.rpc_response(
+                ticket,
+                code=p.enum("gotham.rpc.StatusCode", "FAILED_PRECONDITION"),
+                message="Display audio stream is already in WebRTC Opus mode",
+            )
+        else:
+            self.audio_route_open = True
+            response = p.rpc_response(ticket)
+        self.endpoint.send_wire(WIRE_ID_DC_RPC_CONTROLLER, response)
 
     def _on_start_game(self, ticket: int, req) -> None:
         """READY dispatcher slot 5 -> app event 0xb START_GAME: BROWSE moves to

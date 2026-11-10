@@ -165,6 +165,40 @@ def test_audio_reaches_the_controller(tmp_path) -> None:
     asyncio.run(run())
 
 
+def test_a_second_stream_in_one_boot_plays_although_the_controller_refuses_the_mode_request(tmp_path) -> None:
+    """The controller opens the route to the jack once per boot: it answers the first
+    SetAudioModeRequest OK and a repeat FAILED_PRECONDITION, and plays the frames either way."""
+
+    def mode_answers(rx: Any) -> list[tuple[int, str | None]]:
+        return [
+            (r["code"], r["error_message"])
+            for r in rx.log.records
+            if r["event"] == "rpc_in" and r.get("purpose") == "set_audio_mode"
+        ]
+
+    async def run() -> None:
+        rx = make_receiver(tmp_path)
+        await rx.start()
+        fc = await connect_firmware_flow(rx)
+        cs = single(rx)
+        try:
+            await wait_for(lambda: fc.dc_state == "ready", timeout=6)
+            await cs.audio_start(None)
+            await wait_for(lambda: len(mode_answers(rx)) == 1)
+            await cs.audio_stop()
+            await cs.audio_start(None)
+            cs.audio_feed(b"\xf8\x01", marker=True)
+            await wait_for(lambda: len(mode_answers(rx)) == 2 and len(fc.audio_frames) == 1, timeout=3)
+            assert mode_answers(rx) == [(0, None), (9, "Display audio stream is already in WebRTC Opus mode")]
+            assert fc.audio_frames[0].payload == b"\xf8\x01" and cs.audio_state()["playing"] is True
+        finally:
+            await cs.audio_stop()
+            fc.close()
+            await rx.stop()
+
+    asyncio.run(run())
+
+
 @pytest.mark.skipif(ffmpeg_path() is None, reason="needs ffmpeg (with libopus) on PATH")
 def test_ffmpeg_tone_comes_out_of_the_encoder(tmp_path) -> None:
     """The whole chain with a real encoder: ffmpeg -> local RTP -> pacer -> SRTP/UDP."""
