@@ -4,6 +4,7 @@ controller receives."""
 from __future__ import annotations
 
 import asyncio
+import collections
 import json
 import math
 import os
@@ -41,20 +42,30 @@ class _StubEndpoint:
         return True
 
 
-def test_source_spec_spellings() -> None:
+def test_source_spec_spellings(tmp_path) -> None:
     tone = source_from_spec("tone")
-    assert tone.args[:3] == ["-re", "-f", "lavfi"]
-    assert source_from_spec("file:/tmp/a.ogg").args[-2:] == ["-i", "/tmp/a.ogg"]
+    assert tone.args[:3] == ["-re", "-f", "lavfi"] and not tone.finite
+    song = tmp_path / "a.ogg"
+    song.write_bytes(b"OggS")
+    assert source_from_spec(f"file:{song}").args[-2:] == ["-i", str(song)]
     for bad in ("", "bogus", "file:"):
         with pytest.raises(ValueError):
             source_from_spec(bad)
 
 
+@pytest.mark.parametrize("path", ["http://192.168.2.9/stream.mp3", "tcp://192.168.2.9:9", "/no/such/file.ogg"])
+def test_a_file_source_is_a_file_of_this_computer(path) -> None:
+    """ffmpeg opens a URL wherever it opens a path, and /_audio takes the source from the network."""
+    with pytest.raises(ValueError, match="there is no file"):
+        source_from_spec(f"file:{path}")
+
+
 def test_file_source_puts_stream_loop_before_the_input() -> None:
-    src = Source.from_file("music.ogg", duration=2.0)
+    src = Source.from_file("music.ogg")
     assert src.args.index("-stream_loop") < src.args.index("-i")  # after -i it does nothing
-    assert src.args[-2:] == ["-t", "2.0"]
-    assert src.label == "file music.ogg"
+    assert src.args[-2:] == ["-i", "music.ogg"]
+    assert src.label == "file music.ogg" and not src.finite
+    assert Source.test_tone(duration=0.5).finite
 
 
 def test_sender_numbers_frames_on_its_own_grid() -> None:
@@ -675,6 +686,133 @@ def test_a_capture_that_fails_to_start_is_tried_again() -> None:
         assert stats["notes"][0] == "capture failed: OSError('device busy')"
 
     asyncio.run(run())
+
+
+class _SlowCapture(BlockCapture):
+    """A sound device that takes its time to open, as a real one does."""
+
+    def __init__(self) -> None:
+        super().__init__("slow", 48000, 2)
+        self.opening, self.may_open = threading.Event(), threading.Event()
+        self.is_open = False
+
+    def start(self) -> None:
+        self.opening.set()
+        self.may_open.wait(5)
+        self.is_open = not self._ended  # stopped while it opened: it does not stay open
+
+    def stop(self) -> None:
+        self.is_open = False
+        self._mark_end()
+
+
+@pytest.mark.skipif(ffmpeg_path() is None, reason="needs ffmpeg (with libopus) on PATH")
+@pytest.mark.parametrize("how", ["stop", "kill_now"])
+def test_a_stream_stopped_while_its_sound_device_opens_does_not_leave_it_open(how: str) -> None:
+    async def run() -> None:
+        sender = AudioSender(_StubEndpoint(), srtp=False)
+        cap = _SlowCapture()
+        pcm = ["-f", "s16le", "-ar", "48000", "-ac", "2", "-i", "pipe:0"]
+        await sender.start(Source(pcm, "slow device", pcm=True, open_capture=lambda: cap))
+        await asyncio.to_thread(cap.opening.wait, 10)  # the worker thread is inside the open
+        if how == "stop":
+            await sender.stop()
+        else:
+            sender.kill_now()
+        cap.may_open.set()  # the device finishes opening after the stream is gone
+        await wait_for(lambda: cap._ended and not cap.is_open, timeout=5)
+        assert not sender.playing
+
+    asyncio.run(run())
+
+
+@pytest.mark.skipif(ffmpeg_path() is None, reason="needs ffmpeg (with libopus) on PATH")
+def test_starts_that_overlap_leave_one_stream() -> None:
+    """Two starts at once (a volume change during the autostart) used to run two pacers on one
+    timeline, and a stop then ended only one of them."""
+
+    async def run() -> None:
+        ep = _StubEndpoint()
+        sender = AudioSender(ep, srtp=False)
+        results = await asyncio.gather(sender.start(Source.test_tone()), sender.start(Source.test_tone()))
+        assert [r["playing"] for r in results] == [True, True]
+        await wait_for(lambda: len(ep.sent) >= 10, timeout=10)
+        first = len(ep.sent)
+        await asyncio.sleep(1.0)
+        assert len(ep.sent) - first <= 70  # one stream is fifty frames a second, two would be a hundred
+        seqs = [parse_rtp(p).seq for p in ep.sent]
+        assert seqs == [(seqs[0] + i) & 0xFFFF for i in range(len(seqs))]
+        await sender.stop()
+        sent = len(ep.sent)
+        await asyncio.sleep(0.3)
+        assert len(ep.sent) == sent and not sender.playing
+
+    asyncio.run(run())
+
+
+@pytest.mark.skipif(ffmpeg_path() is None, reason="needs ffmpeg (with libopus) on PATH")
+def test_a_sender_killed_while_it_starts_does_not_come_back() -> None:
+    """A controller that reboots while its stream restarts drops the sender: the start under way
+    must not leave an ffmpeg and a pacer that nobody can stop any more."""
+
+    async def run() -> None:
+        ep = _StubEndpoint()
+        sender = AudioSender(ep, srtp=False)
+        starting = asyncio.get_running_loop().create_task(sender.start(Source.test_tone()))
+        await asyncio.sleep(0)  # the start is past its own stop and opening its socket
+        sender.kill_now()
+        assert (await starting)["playing"] is False
+        await asyncio.sleep(0.5)
+        assert not sender.playing and ep.sent == [] and sender._task is None and sender._transport is None
+        assert (await sender.start(Source.test_tone()))["playing"] is False  # for good
+
+    asyncio.run(run())
+
+
+@pytest.mark.skipif(ffmpeg_path() is None, reason="needs ffmpeg (with libopus) on PATH")
+def test_a_finite_source_ends_the_stream_instead_of_starting_over() -> None:
+    async def run() -> None:
+        ep = _StubEndpoint()
+        events: list[str] = []
+        sender = AudioSender(ep, srtp=False, log=lambda event, **_fields: events.append(event))
+        await sender.start(Source.test_tone(duration=0.6))
+        await wait_for(lambda: not sender.playing, timeout=10)
+        sent = len(ep.sent)
+        assert sent >= 5 and sender._q == collections.deque()  # what was queued at the end went out
+        await asyncio.sleep(0.8)  # long enough for a restart to have sent a second tone
+        assert len(ep.sent) == sent and sender.stats.ffmpeg_restarts == 0
+        assert (events[0], events[-1]) == ("audio_started", "audio_source_ended")
+        assert "audio_ffmpeg_exited" not in events  # which is what a restart logs
+        await sender.stop()
+
+    asyncio.run(run())
+
+
+@pytest.mark.skipif(ffmpeg_path() is None, reason="needs ffmpeg (with libopus) on PATH")
+def test_an_ffmpeg_that_keeps_failing_is_started_less_and_less_often(monkeypatch) -> None:
+    """A stream whose ffmpeg exits at once (a build without libopus, a device that is gone) was
+    started again twice a second for good, with a log record each time."""
+    from stadiacast import audio
+
+    waits: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def no_wait(delay: float) -> None:
+        if delay >= 0.5:  # the supervisor's own waits: recorded, not sat out
+            waits.append(delay)
+            delay = 0
+        await real_sleep(delay)
+
+    monkeypatch.setattr(audio.asyncio, "sleep", no_wait)
+
+    async def run() -> None:
+        sender = AudioSender(_StubEndpoint(), srtp=False)
+        await sender.start(Source(["-f", "no-such-format", "-i", "nothing"], "broken"))
+        await wait_for(lambda: len(waits) >= 7, timeout=20)
+        await sender.stop()
+
+    asyncio.run(run())
+    assert waits[:7] == [0.5, 1.0, 2.0, 4.0, 10.0, 10.0, 10.0]
 
 
 def test_the_audio_endpoint(tmp_path) -> None:

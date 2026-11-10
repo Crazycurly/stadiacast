@@ -5,26 +5,12 @@ with the keys the DTLS handshake exported (``EXTRACTOR-dtls_srtp`` -> ``endpoint
 
     RTP(Opus, PT 111) -> srtp_out.protect_rtp() -> UDP to remote.selected
 
-Two things have to be true before a single frame is audible, and neither is in the SDP:
-
-* **The firmware has to be told to open the path.** ``SetAudioMode(mode=2, f3=True)``
-  (``DisplayToController`` #16) selects the WebRTC Opus route; without it the pad accepts the
-  packets and plays nothing. ``mode=3`` is rejected as ``Unsupported audio mode: UDP_PCM``.
-* **The media must not go through the 0x66 sub-channel.** That tunnel carries input reports
-  and RPCs, and stuffing audio into it is silently dropped on real hardware (measured).
-
-Three things the obvious implementation gets wrong, and this module does not:
-
-1. **Its own SSRC and sequence numbers.** The display link also sends input ACKs, and those
-   use ``endpoint.local_ssrc`` / ``endpoint.tx_seq``. Sharing them makes the controller see
-   one stream whose sequence jumps backwards, which it treats as loss.
-2. **Timestamps from the slot index, not from the encoder.** ffmpeg starts at a random
-   timestamp and its output pace is not a 20 ms grid. ``slot * 960`` keeps the timeline the
-   controller expects: a slot with no frame leaves a hole, and the controller conceals it
-   instead of shifting everything after it (which is what crackles).
-3. **Pacing in the sender.** ffmpeg hands frames over in bursts, while the controller's
-   jitter buffer wants one every 20 ms. ``_pace`` does that on a 4 ms poll: Windows' default
-   timer resolution is 15.6 ms, so a bare ``sleep(0.02)`` degenerates into 20/31 ms.
+``docs/protocol.md`` ("Audio to the headset jack") says what the controller needs for a frame to
+be audible: ``SetAudioMode(mode=2)`` first, the media on the UDP pair and not in the ``0x66``
+sub-channel, a stream with its own SSRC and sequence numbers, timestamps that follow the 20 ms
+slots and one frame per slot.  The last three are this module's: :class:`AudioSender` numbers
+the stream itself and ``_pace`` sends on the grid, on a 4 ms poll since Windows' default timer
+resolution of 15.6 ms turns a bare ``sleep(0.02)`` into 20 or 31 ms.
 
 The frames come from ffmpeg, and a :class:`Source` is its input. A test tone or a file ffmpeg
 reads by itself. What the computer plays (``system``) or one capture device (``device:NAME``) is
@@ -44,6 +30,7 @@ import array
 import asyncio
 import collections
 import contextlib
+import os
 import shutil
 import sys
 import time
@@ -70,6 +57,15 @@ QUEUE_TARGET = 6
 
 #: Notes a stream keeps: the latest ones, since a failing ffmpeg adds one per restart.
 NOTES_KEPT = 6
+
+#: Seconds before ffmpeg is started again after it exited, by how many times in a row it ran for
+#: less than :data:`SETTLED_AFTER` seconds.  A device that was unplugged, or an ffmpeg that cannot
+#: encode at all, is tried again every ten seconds instead of twice a second.
+RESTART_DELAYS = (0.5, 1.0, 2.0, 4.0, 10.0)
+SETTLED_AFTER = 5.0
+
+#: Bytes kept of what ffmpeg wrote before it exited: the end of it goes into the log.
+STDERR_KEPT = 2048
 
 
 def ffmpeg_path() -> str | None:
@@ -113,6 +109,8 @@ class Source:
     pcm: bool = False
     #: Makes that capture, not yet started. One per ffmpeg run, since a capture does not restart.
     open_capture: Callable[[], capture.BlockCapture] | None = None
+    #: The input ends by itself: when ffmpeg exits cleanly the stream is over, not to be restarted.
+    finite: bool = False
 
     @staticmethod
     def system() -> Source:
@@ -143,19 +141,14 @@ class Source:
         if duration:
             spec += f":duration={duration:.1f}"
         # lavfi renders instantly; -re makes it drip out at real time instead of filling the queue.
-        return Source(["-re", "-f", "lavfi", "-i", spec], f"test tone {hz:.0f} Hz")
+        return Source(["-re", "-f", "lavfi", "-i", spec], f"test tone {hz:.0f} Hz", finite=bool(duration))
 
     @staticmethod
-    def from_file(path: str, *, loop: bool = True, duration: float | None = None) -> Source:
-        """An audio file. ``-stream_loop -1`` and ``-re`` must precede ``-i`` to have any effect."""
-        args = ["-re"]
-        if loop:
-            args += ["-stream_loop", "-1"]
-        args += ["-i", path]
-        if duration:
-            args += ["-t", f"{duration:.1f}"]
+    def from_file(path: str) -> Source:
+        """An audio file, played in a loop. ``-stream_loop -1`` and ``-re`` must precede ``-i`` to
+        have any effect."""
         name = str(path).replace("\\", "/").rsplit("/", 1)[-1]
-        return Source(args, f"file {name}")
+        return Source(["-re", "-stream_loop", "-1", "-i", path], f"file {name}")
 
 
 # --------------------------------------------------------------------------- stats
@@ -247,8 +240,8 @@ class AudioSender:
         self.endpoint = endpoint
         self.log = log or (lambda *_a, **_k: None)
         self.payload_type = payload_type
-        #: SRTP is what the firmware's own audio path uses. ``srtp=False`` sends bare RTP,
-        #: which the fake controller in the tests can read without a crypto context.
+        #: SRTP is what the firmware's own audio path uses. ``srtp=False`` sends bare RTP, for a
+        #: test that looks at the packets themselves.
         self.srtp = srtp
         #: Audio gets its own SSRC: ``endpoint.local_ssrc`` belongs to the input ACKs.
         self.ssrc = ssrc if ssrc is not None else (0x51A00000 | (int(time.time()) & 0xFFFF))
@@ -270,6 +263,8 @@ class AudioSender:
         self._pacer: asyncio.Task[None] | None = None
         self._feed: asyncio.Task[None] | None = None
         self._capture: capture.BlockCapture | None = None
+        self._lifecycle = asyncio.Lock()  # start() and stop() run one at a time
+        self._killed = False  # kill_now() is final: a start it interrupted must not revive the stream
         self._sysvol = 1.0
         self._sysvol_at = 0.0
         self._sysvol_warned = False
@@ -285,43 +280,59 @@ class AudioSender:
 
         ``source=None`` starts the pacer alone, with frames coming from :meth:`enqueue`:
         that is what the tests use, and what any caller with its own encoder would do.
+        After :meth:`kill_now` nothing starts: the answer says ``playing`` false.
         """
-        await self.stop()
-        # Looked up before anything starts, so a missing ffmpeg leaves nothing half set up.
-        exe = ffmpeg_path() if source is not None else None
-        if source is not None and exe is None:
-            raise SetupError("ffmpeg not found on PATH (a build with libopus is required)")
-        self.stats = AudioStats(started_at=time.time())
-        self._q.clear()
-        self._last_send_at = 0.0
-        self.source = source
-        self._timer_raised = _set_timer_resolution(True)
+        async with self._lifecycle:
+            await self._stop()
+            # Looked up before anything starts, so a missing ffmpeg leaves nothing half set up.
+            exe = ffmpeg_path() if source is not None else None
+            if source is not None and exe is None:
+                raise SetupError("ffmpeg not found on PATH (a build with libopus is required)")
+            started = False
+            if not self._killed:
+                self.stats = AudioStats(started_at=time.time())
+                self._q.clear()
+                self._last_send_at = 0.0
+                self.source = source
+                started = await self._start_tasks(exe, source)
+            return {
+                "playing": started,
+                "source": self.source.label if self.source else None,
+                "payload_type": self.payload_type,
+                "ssrc": f"{self.ssrc:08x}",
+            }
+
+    async def _start_tasks(self, exe: str | None, source: Source | None) -> bool:
+        loop = asyncio.get_running_loop()
         if source is not None and exe is not None:
-            loop = asyncio.get_running_loop()
             transport, _ = await loop.create_datagram_endpoint(lambda: _LocalRtp(self), local_addr=("127.0.0.1", 0))
+            if self._killed:  # while the socket was being opened
+                transport.close()
+                return False
             self._transport = transport
             self._port = transport.get_extra_info("sockname")[1]
-            self._task = asyncio.get_running_loop().create_task(self._supervise(exe, source))
+            self._task = loop.create_task(self._supervise(exe, source))
+        self._timer_raised = _set_timer_resolution(True)
         self._running = True
-        self._pacer = asyncio.get_running_loop().create_task(self._pace())
-        self.log("audio_started", source=self.source.label if self.source else None, pt=self.payload_type)
-        return {
-            "playing": True,
-            "source": self.source.label if self.source else None,
-            "payload_type": self.payload_type,
-            "ssrc": f"{self.ssrc:08x}",
-        }
+        self._pacer = loop.create_task(self._pace())
+        self.log("audio_started", source=source.label if source else None, pt=self.payload_type)
+        return True
 
     async def stop(self) -> dict[str, Any]:
-        self._running = False
+        async with self._lifecycle:
+            return await self._stop()
+
+    async def _stop(self) -> dict[str, Any]:
+        was_running, self._running = self._running, False
         self._release_timer()
         await self._cancel_tasks()
+        self._stop_capture()  # a feed cancelled while its device was opening has not stopped it
         await self._kill_ffmpeg()
         if self._transport is not None:
             self._transport.close()
             self._transport = None
         self._port = None
-        if self.stats.frames:
+        if was_running and self.stats.frames:
             self.log("audio_stopped", **self.stats.snapshot())
         return {"playing": False, "stats": self.stats.snapshot()}
 
@@ -345,7 +356,9 @@ class AudioSender:
         return self._running
 
     def kill_now(self) -> None:
-        """Tear down without awaiting: the event loop is going away."""
+        """Tear down without awaiting, for good: the controller's session is being reset or
+        stopped, and whoever holds this sender drops it."""
+        self._killed = True
         self._running = False
         self._release_timer()
         for name in ("_feed", "_task", "_pacer"):
@@ -405,10 +418,14 @@ class AudioSender:
         ]
 
     async def _supervise(self, exe: str, source: Source) -> None:
-        """Keep ffmpeg alive: a device change or an unplug kills it mid-stream."""
+        """Keep ffmpeg alive: a device change or an unplug kills it mid-stream.  Exits that follow
+        each other closely are spaced out (:data:`RESTART_DELAYS`); a finite source that ends
+        cleanly ends the stream."""
+        quick_exits = 0
         while self._running:
+            started = time.monotonic()
             try:
-                self._proc = await asyncio.create_subprocess_exec(
+                proc = self._proc = await asyncio.create_subprocess_exec(
                     *self._ffmpeg_cmd(exe, source),
                     stdin=asyncio.subprocess.PIPE if source.pcm else asyncio.subprocess.DEVNULL,
                     stdout=asyncio.subprocess.DEVNULL,  # ffmpeg prints the SDP there
@@ -417,15 +434,18 @@ class AudioSender:
             except OSError as e:
                 self.stats.notes.append(f"spawn failed: {e}")
                 self.log("audio_ffmpeg_spawn_failed", error=repr(e))
-                await asyncio.sleep(2.0)
+                await asyncio.sleep(RESTART_DELAYS[-1])
                 continue
-            if source.pcm and self._proc.stdin is not None:
-                self._feed = asyncio.get_running_loop().create_task(self._feed_pcm(self._proc.stdin, source))
-            err = b""
-            if self._proc.stderr is not None:
+            if source.pcm and proc.stdin is not None:
+                self._feed = asyncio.get_running_loop().create_task(self._feed_pcm(proc.stdin, source))
+            # What ffmpeg says is read as it comes, so that its pipe never fills, and only the end
+            # of it is kept: a warning repeated for hours would otherwise all stay in memory.
+            said = b""
+            if proc.stderr is not None:
                 with contextlib.suppress(Exception):
-                    err = await self._proc.stderr.read()
-            code = await self._proc.wait()
+                    while chunk := await proc.stderr.read(4096):
+                        said = (said + chunk)[-STDERR_KEPT:]
+            code = await proc.wait()
             self._proc = None
             feed, self._feed = self._feed, None
             if feed is not None:
@@ -435,11 +455,19 @@ class AudioSender:
             self._stop_capture()
             if not self._running:
                 return
-            tail = err.decode("utf-8", "replace").strip().splitlines()[-4:]
+            if source.finite and code == 0:
+                while self._q and self._running:  # the pacer takes one frame per slot
+                    await asyncio.sleep(FRAME_INTERVAL)
+                self._running = False
+                self._release_timer()
+                self.log("audio_source_ended", source=source.label, **self.stats.snapshot())
+                return
+            quick_exits = quick_exits + 1 if time.monotonic() - started < SETTLED_AFTER else 0
+            tail = said.decode("utf-8", "replace").strip().splitlines()[-4:]
             self.stats.ffmpeg_restarts += 1
             self.stats.notes.append(f"ffmpeg exit {code}: {' | '.join(tail)[:180]}")
             self.log("audio_ffmpeg_exited", code=code, tail=tail)
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(RESTART_DELAYS[max(0, min(quick_exits, len(RESTART_DELAYS)) - 1)])
 
     async def _kill_ffmpeg(self) -> None:
         proc, self._proc = self._proc, None
@@ -466,8 +494,9 @@ class AudioSender:
             cap = source.open_capture() if source.open_capture else None
             if cap is None:
                 raise RuntimeError("the PCM source has no capture to open")
-            # Registered before it opens, so a stop during the open (a worker thread: opening a
-            # sound device takes a while) still reaches it.
+            # Registered before it opens, in a worker thread since opening a sound device takes a
+            # while: a stop during the open reaches it, and a capture stopped while it opens closes
+            # its device once it has (BlockCapture.stop).
             self._capture = cap
             await asyncio.to_thread(cap.start)
         except Exception as e:
@@ -658,6 +687,9 @@ def source_from_spec(spec: str) -> Source:
         path = spec[len("file:") :]
         if not path:
             raise ValueError("--audio-source file: needs a path")
+        # ffmpeg takes a URL where it takes a path: only a file of this computer is a source
+        if not os.path.isfile(path):
+            raise ValueError(f"--audio-source file: there is no file {path!r}")
         return Source.from_file(path)
     raise ValueError(f"unknown audio source {spec!r}; use tone, file:PATH, system or device:NAME")
 

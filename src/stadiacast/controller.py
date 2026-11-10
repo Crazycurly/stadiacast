@@ -148,7 +148,7 @@ class ControllerSession:
         self._last_input: GamepadState | None = None  # previous ControllerToDisplay #3 report
         self._audio: AudioSender | None = None  # headset jack, created when a stream starts
         # The stream's settings, kept across starts and stops (a sender only lives while it plays).
-        self._audio_volume = self.cfg.audio_volume
+        self._audio_volume = _clamp_volume(self.cfg.audio_volume)
         self._audio_application = self.cfg.audio_application
         self._audio_task: asyncio.Task[None] | None = None  # this boot's --audio-source autostart
 
