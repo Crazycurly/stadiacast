@@ -42,6 +42,6 @@ jobs:
             --pattern "stadiacast-${version}-py3-none-any.whl"
           ls -l dist
       - name: upload (files already on PyPI are skipped)
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086  # v1.14.3
         with:
           skip-existing: true

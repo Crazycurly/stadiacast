@@ -17,6 +17,9 @@ on:
         default: windows-latest
         required: false
 
+permissions:
+  contents: read
+
 jobs:
   windows:
     runs-on: ${{ inputs.runner || 'windows-latest' }}
@@ -26,8 +29,8 @@ jobs:
       # the driver is installed below, with the quiet switches
       VGAMEPAD_SKIP_VIGEMBUS_INSTALL: "true"
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0
         with:
           python-version: "3.13"
           enable-cache: true
@@ -87,7 +90,7 @@ jobs:
           STADIACAST_WINDOWS_LAB: "1"
         run: uv run pytest -q -rs tests/test_windows_lab.py
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: windows-executables
           path: dist/*.exe
