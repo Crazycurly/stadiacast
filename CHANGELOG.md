@@ -7,19 +7,25 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
-- `stadiacast-provision provision --skip-scan` leaves out the controller's Wi-Fi scan, for
-  controllers that drop the Bluetooth link a few seconds after it: give your network's security
-  with `--wpa-auth` and `--wpa-cipher` instead (7 and 4 for WPA2-Personal).
+- When the controller cannot join the network, `stadiacast-provision provision` says so and
+  what to check: the network name, the password, `--wifi-scan`.
+
+### Changed
+- `stadiacast-provision provision` no longer has the controller scan for Wi-Fi networks first:
+  it assumes WPA2-Personal (AES) when a password is given and an open network otherwise, and
+  the controller finds the network by itself. This works on controllers that drop the Bluetooth
+  link a few seconds after that scan. `--wifi-scan` brings the scan back, for networks with
+  other security; `--wpa-auth` and `--wpa-cipher` set it by hand.
 
 ### Fixed
-- `stadiacast-provision` reads the controller's public key before it starts the controller's
-  Wi-Fi scan: some controllers drop the Bluetooth link a few seconds after that scan, and the
-  key was the longest read left after it.
+- With `--wifi-scan`, `stadiacast-provision` reads the controller's public key before it starts
+  the scan: some controllers drop the Bluetooth link a few seconds after that scan, and the key
+  was the longest read left after it.
 - `stadiacast-provision` reads windows of up to 24 pages instead of 16, and a window that
   arrives cut short now ends it with one line asking to run it again, instead of a traceback.
 - A Bluetooth failure (a dropped link, a timeout, Bluetooth turned off) ends
-  `stadiacast-provision` with one line instead of a traceback, and when the link drops during
-  `provision` it says when `--skip-scan` helps.
+  `stadiacast-provision` with one line instead of a traceback, and when the link drops after the
+  Wi-Fi scan it says to run it again without `--wifi-scan`.
 
 ## [1.0.1] - 2026-11-07
 

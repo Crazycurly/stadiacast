@@ -205,16 +205,17 @@ stadiacast-provision scan                                 # find the controller 
 stadiacast-provision provision --address <ADDR> --ssid <SSID>      # prompts for the password
 ```
 
-The tool reads the controller's RSA public key, has the controller scan for Wi-Fi networks
-and copies the security parameters it reports for yours, then writes the credentials with the
-password encrypted under that key. The BLE link dropping right after the write is normal: the
-controller leaves setup mode.
+The tool reads the controller's RSA public key and writes the network's name and the password,
+encrypted under that key; the controller then finds the network by itself. It assumes
+WPA2-Personal (AES) when you give a password and an open network when you leave it blank. The
+BLE link dropping right after the write is normal: the controller leaves setup mode. If the
+controller cannot join (`STATE -> 0x4f`), the tool says what to check.
 
-Some controllers drop the BLE link a few seconds after that Wi-Fi scan, before the credentials
-are written: the tool then stops with a Bluetooth error after `STATE -> 0x16 (scan/netcheck
-done)`. Run it again with `--skip-scan` and give your network's security yourself,
-`--wpa-auth 7 --wpa-cipher 4` for WPA2-Personal (AES) or `1` and `1` for an open network. The
-controller then finds the network by itself.
+For a network with other security, add `--wifi-scan`: the controller scans for Wi-Fi networks
+first and the tool copies the security it reports for yours. Some controllers drop the BLE link
+a few seconds after that scan; the tool then stops with a Bluetooth error after
+`STATE -> 0x16 (scan/netcheck done)`. Give the security by hand instead, without the scan:
+`--wpa-auth` and `--wpa-cipher` take the values listed in `--help`.
 
 **What to expect on the first boot** (seen live on firmware `ota.282115`): the controller joins
 the Wi-Fi, blinks white, resolves the Google names through the receiver and registers with it

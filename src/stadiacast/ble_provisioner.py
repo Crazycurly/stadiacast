@@ -7,8 +7,7 @@ controller; making it automatic is on the roadmap.
     stadiacast-provision scan
     stadiacast-provision list-services --address ADDR
     stadiacast-provision windows --address ADDR
-    stadiacast-provision provision --address ADDR --ssid SSID [--password PASS]
-    stadiacast-provision provision --address ADDR --ssid SSID --skip-scan --wpa-auth 7 --wpa-cipher 4
+    stadiacast-provision provision --address ADDR --ssid SSID [--password PASS] [--wifi-scan]
 
 Protocol summary (service 0000fea0-...):
     0328fe40-002f-11e5-87d0-0002a5d5c51b  write   connect_to_network JSON
@@ -70,6 +69,12 @@ STATE_NAMES = {
     0x4F: "credential error / connect failed",
 }
 STATE_SCAN_DONE = 0x16
+STATE_JOIN_FAILED = 0x4F
+
+# The security enums written without a Wi-Fi scan (build_connect_payload): WPA2-Personal (AES)
+# with a password, an open network without one.
+WPA2_PERSONAL = (7, 4)
+OPEN_NETWORK = (1, 1)
 
 
 def _window_data_char(page: str) -> str:
@@ -102,9 +107,10 @@ def build_connect_payload(
 ) -> dict[str, Any]:
     """The connect_to_network payload (confirmed working live).
 
-    ``wpa_auth`` / ``wpa_cipher`` MUST be the values the device's own scan reports for the target
-    network (Google enum family: wpa_auth 1=open, 2=WEP, 5=WPA-PSK, 7=WPA2-PSK; wpa_cipher 1=none,
-    2=WEP, 3=TKIP, 4=CCMP).  Mismatched values fail silently with state 0x4f.
+    ``wpa_auth`` / ``wpa_cipher`` must match the network's security (Google enum family:
+    wpa_auth 1=open, 2=WEP, 5=WPA-PSK, 7=WPA2-PSK; wpa_cipher 1=none, 2=WEP, 3=TKIP, 4=CCMP);
+    mismatched values fail silently with state 0x4f.  ``bssid`` and ``frequency`` come from the
+    controller's own scan and can be left out: the controller then finds the network itself.
     """
     params: dict[str, Any] = {"ssid": ssid, "wpa_auth": wpa_auth, "wpa_cipher": wpa_cipher}
     if bssid:
@@ -258,18 +264,16 @@ async def provision(
     wpa_cipher: int | None = None,
     service_data_match: str | None = None,
     wait: float = 45.0,
-    skip_scan: bool = False,
+    wifi_scan: bool = False,
 ) -> None:
-    """Read the device key, scan for the network and write the credentials with the password encrypted.
+    """Read the device key and write the credentials with the password encrypted.
 
-    With ``skip_scan`` the controller's Wi-Fi scan is left out: ``wpa_auth`` and ``wpa_cipher``
-    are then required, and the payload carries no ``bssid`` or ``frequency``; the controller
-    finds the network by itself.
+    The security enums are WPA2-Personal (AES) with a password and an open network without one,
+    unless ``wpa_auth`` and ``wpa_cipher`` say otherwise; the payload carries no ``bssid`` or
+    ``frequency``, and the controller finds the network by itself.  With ``wifi_scan`` the
+    controller scans for Wi-Fi networks first, and the enums (unless given), the bssid and the
+    frequency are copied from what it reports for ``ssid``.
     """
-    if skip_scan and (wpa_auth is None or wpa_cipher is None):
-        raise ProvisioningError(
-            "--skip-scan needs --wpa-auth and --wpa-cipher: 7 and 4 for WPA2-Personal, 1 and 1 for an open network"
-        )
     print(f"Looking for {address} (up to 30s)...")
     wanted = service_data_match.lower() if service_data_match else None
 
@@ -287,11 +291,18 @@ async def provision(
     print(f"Connecting to {device.address}...")
     async with BleakClient(device, timeout=30.0) as client:
         print(f"Connected to {device.address} (MTU {client.mtu_size})")
-        await client.start_notify(CHAR_STATE, on_state)
+        states: list[int] = []
+
+        def on_state_seen(char: Any, data: bytearray) -> None:
+            on_state(char, data)
+            if data:
+                states.append(data[-1])
+
+        await client.start_notify(CHAR_STATE, on_state_seen)
         await client.start_notify(CHAR_OTA_STATUS, on_ota)
 
-        # 1. the device RSA public key, before the scan of step 2: some controllers drop the BLE
-        # link a few seconds after that scan, and the key is the longest read of the exchange
+        # 1. the device RSA public key, before any Wi-Fi scan: some controllers drop the BLE link
+        # a few seconds after that scan, and the key is the longest read of the exchange
         enc = None
         if password:
             bundle = window_payload(await window_read(client, WINDOW_CRYPTO))
@@ -299,22 +310,24 @@ async def provision(
             print(f"Device RSA public key: {public_key.key_size} bits")
             enc = encrypt_password(password, public_key)
 
-        # 2. the security enums the controller's own scan reports for the target, unless skipped
-        # (both are given then); without bssid and frequency the controller finds the network itself
+        # 2. the security enums: WPA2-Personal or open, or with wifi_scan the ones the controller's
+        # own scan reports for the target, with its bssid and frequency; given ones win either way
+        auth, cipher = WPA2_PERSONAL if password else OPEN_NETWORK
         net: dict[str, Any] = {}
-        if not skip_scan:
+        if wifi_scan:
             print(f"Scanning for {ssid!r}...")
             net = await trigger_scan_and_get_network(client, ssid)
             print(
                 f"Found: {net['ssid']} ({net['signal_level']} dBm, bssid {net['bssid']}, "
                 f"wpa_auth={net['wpa_auth']}, wpa_cipher={net['wpa_cipher']})"
             )
+            auth, cipher = net["wpa_auth"], net["wpa_cipher"]
 
         payload = build_connect_payload(
             ssid,
             enc,
-            wpa_auth if wpa_auth is not None else net["wpa_auth"],
-            wpa_cipher if wpa_cipher is not None else net["wpa_cipher"],
+            wpa_auth if wpa_auth is not None else auth,
+            wpa_cipher if wpa_cipher is not None else cipher,
             bssid=net.get("bssid"),
             frequency=net.get("frequency"),
         )
@@ -338,6 +351,14 @@ async def provision(
                     print(f"Controller IP: {'.'.join(str(b) for b in ip)}")
             except Exception as e:  # the link usually drops once provisioning completes
                 print(f"(final read: {e}; link dropped, likely provisioning complete)")
+        if states and states[-1] == STATE_JOIN_FAILED:
+            hint = (
+                "check the password"
+                if wifi_scan
+                else "check the network name and the password; for a network that is not WPA2-Personal (AES), "
+                "run it again with --wifi-scan"
+            )
+            raise ProvisioningError(f"the controller did not join {ssid!r} (STATE 0x{STATE_JOIN_FAILED:02x}): {hint}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -350,17 +371,29 @@ def build_parser() -> argparse.ArgumentParser:
     p_ls.add_argument("--address", "-a", required=True)
     p_wd = sub.add_parser("windows", help="dump windowed-read payloads (state, scan, info, crypto)")
     p_wd.add_argument("--address", "-a", required=True)
-    p_pr = sub.add_parser("provision", help="scan, then send Wi-Fi credentials")
+    p_pr = sub.add_parser("provision", help="send Wi-Fi credentials to a controller in setup mode")
     p_pr.add_argument("--address", "-a", required=True, help="BLE address (a CoreBluetooth UUID on macOS)")
     p_pr.add_argument("--ssid", "-s", required=True)
     p_pr.add_argument("--password", "-p", help="omit to be prompted securely (or set STADIA_WIFI_PW)")
-    p_pr.add_argument("--wpa-auth", type=int, default=None, help="override (default: copy from device scan results)")
-    p_pr.add_argument("--wpa-cipher", type=int, default=None, help="override (default: copy from device scan results)")
     p_pr.add_argument(
-        "--skip-scan",
+        "--wpa-auth",
+        type=int,
+        default=None,
+        help="the network's security: 7 WPA2-PSK (the default with a password), 1 open (the default without), "
+        "5 WPA-PSK, 2 WEP",
+    )
+    p_pr.add_argument(
+        "--wpa-cipher",
+        type=int,
+        default=None,
+        help="the network's cipher: 4 CCMP/AES (the default with a password), 1 none (the default without), "
+        "3 TKIP, 2 WEP",
+    )
+    p_pr.add_argument(
+        "--wifi-scan",
         action="store_true",
-        help="leave out the controller's Wi-Fi scan, for controllers that drop the BLE link after it; "
-        "needs --wpa-auth and --wpa-cipher (7 and 4 for WPA2-Personal, 1 and 1 for an open network)",
+        help="have the controller scan for Wi-Fi networks first and copy your network's security from what it "
+        "reports, for a network that is not WPA2-Personal; some controllers drop the Bluetooth link after that scan",
     )
     p_pr.add_argument(
         "--service-data-match",
@@ -397,7 +430,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     wpa_cipher=args.wpa_cipher,
                     service_data_match=args.service_data_match,
                     wait=args.wait,
-                    skip_scan=args.skip_scan,
+                    wifi_scan=args.wifi_scan,
                 )
             )
     except KeyboardInterrupt:
@@ -407,10 +440,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     except (BleakError, OSError) as e:  # the Bluetooth stack: a dropped link, a timeout, Bluetooth off
         print(f"stadiacast-provision: Bluetooth: {str(e) or type(e).__name__}", file=sys.stderr)
-        if args.cmd == "provision":
+        if args.cmd == "provision" and args.wifi_scan:
             print(
                 "If this came right after STATE 0x16, the controller dropped the link after its Wi-Fi scan:\n"
-                "run it again with --skip-scan --wpa-auth 7 --wpa-cipher 4 (WPA2-Personal; see --help).",
+                "run it again without --wifi-scan, giving --wpa-auth and --wpa-cipher (see --help).",
                 file=sys.stderr,
             )
         return 1

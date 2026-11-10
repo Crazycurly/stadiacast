@@ -1,5 +1,5 @@
 """stadiacast.ble_provisioner without a radio: the pure parts, and the whole provisioning flow against a
-fake BLE stack (device discovery, the Wi-Fi scan, the RSA-encrypted credential write)."""
+fake BLE stack (device discovery, the optional Wi-Fi scan, the RSA-encrypted credential write)."""
 
 from __future__ import annotations
 
@@ -69,10 +69,11 @@ def test_cli_requires_a_subcommand_and_knows_the_match_option():
         parser.parse_args([])
     args = parser.parse_args(["provision", "-a", "ADDR", "-s", "net", "--service-data-match", "7AC0"])
     assert (args.cmd, args.address, args.ssid, args.service_data_match) == ("provision", "ADDR", "net", "7AC0")
+    assert not args.wifi_scan and (args.wpa_auth, args.wpa_cipher) == (None, None)  # the password decides
     args = parser.parse_args(
-        ["provision", "-a", "ADDR", "-s", "net", "--skip-scan", "--wpa-auth", "7", "--wpa-cipher", "4"]
+        ["provision", "-a", "ADDR", "-s", "net", "--wifi-scan", "--wpa-auth", "5", "--wpa-cipher", "3"]
     )
-    assert args.skip_scan and (args.wpa_auth, args.wpa_cipher) == (7, 4)
+    assert args.wifi_scan and (args.wpa_auth, args.wpa_cipher) == (5, 3)
     assert ble.STATE_NAMES[0x3C] == "connected"
 
 
@@ -91,8 +92,11 @@ def test_main_reports_a_missing_ble_extra(monkeypatch, capsys):
     assert "stadiacast[ble]" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("wifi_scan", [False, True])
 @pytest.mark.parametrize("kind", ["bleak", "winrt"])
-def test_main_reports_a_dropped_link_in_one_line_and_points_at_skip_scan(fake_ble, monkeypatch, capsys, kind):
+def test_main_reports_a_dropped_link_in_one_line_and_after_a_wifi_scan_says_to_leave_it_out(
+    fake_ble, monkeypatch, capsys, kind, wifi_scan
+):
     exc = pytest.importorskip("bleak.exc")
     # the two forms a dropped link took on a real controller: bleak's own error and WinRT's OSError
     error = exc.BleakError("Not connected") if kind == "bleak" else OSError("The object has been closed.")
@@ -102,10 +106,10 @@ def test_main_reports_a_dropped_link_in_one_line_and_points_at_skip_scan(fake_bl
 
     monkeypatch.setattr(fake_ble, "read_gatt_char", link_gone)
     argv = ["provision", "-a", FakeScanner.device.address, "-s", "hotspot", "-p", "hunter2", "--wait", "0"]
-    assert ble.main(argv) == 1
+    assert ble.main([*argv, "--wifi-scan"] if wifi_scan else argv) == 1
     err = capsys.readouterr().err
-    assert f"stadiacast-provision: Bluetooth: {error}" in err
-    assert "--skip-scan" in err and "Traceback" not in err
+    assert f"stadiacast-provision: Bluetooth: {error}" in err and "Traceback" not in err
+    assert ("without --wifi-scan" in err) == wifi_scan
 
 
 # ---- the provisioning flow against a fake controller --------------------------------------
@@ -144,6 +148,7 @@ class FakeClient:
     mtu_size = 517  # what the controller negotiates: the credential JSON is one ATT write
     instances: ClassVar[list[FakeClient]] = []
     torn: ClassVar[set[tuple[str, str]]] = set()  # windows that arrive cut short
+    join_state: ClassVar[int] = 0x3C  # what the credential write ends in
 
     def __init__(self, device: Any, timeout: float | None = None) -> None:  # noqa: ARG002
         self.device = device
@@ -167,8 +172,8 @@ class FakeClient:
         if char == ble.CHAR_SETTINGS:
             self.state = ble.STATE_SCAN_DONE
         elif char == ble.CHAR_CONNECT:
-            self.state = 0x3C
-            self.notify[ble.CHAR_STATE](None, bytearray([0x1E, 0x3C]))
+            self.state = self.join_state
+            self.notify[ble.CHAR_STATE](None, bytearray([0x1E, self.join_state]))
         else:
             self.pages[char] = int.from_bytes(data, "little")
 
@@ -209,12 +214,29 @@ def fake_ble(monkeypatch):
     monkeypatch.setattr(ble, "BleakClient", FakeClient)
     monkeypatch.setattr(ble, "BleakScanner", FakeScanner)
     monkeypatch.setattr(FakeClient, "torn", set())
+    monkeypatch.setattr(FakeClient, "join_state", 0x3C)
     FakeClient.instances.clear()
     return FakeClient
 
 
-def test_provision_scans_copies_the_security_enums_and_writes_encrypted_credentials(fake_ble, capsys):
+def test_provision_by_default_leaves_out_the_wifi_scan_and_assumes_wpa2(fake_ble, capsys):
     asyncio.run(ble.provision(FakeScanner.device.address, "hotspot", "hunter2", wait=0.01))
+    (client,) = fake_ble.instances
+    chars = [c for c, _ in client.writes]
+    assert chars[0] == ble.WINDOW_CRYPTO[1]  # the key read
+    assert ble.CHAR_SETTINGS not in chars and ble.WINDOW_SCAN[1] not in chars  # no Wi-Fi scan
+    assert chars[-1] == ble.CHAR_CONNECT
+    payload = json.loads(client.writes[-1][1])
+    assert (payload["wpa_auth"], payload["wpa_cipher"]) == ble.WPA2_PERSONAL == (7, 4)
+    assert "bssid" not in payload and "frequency" not in payload  # the controller joins without them
+    assert PRIVATE_KEY.decrypt(base64.b64decode(payload["enc_passwd"]), padding.PKCS1v15()) == b"hunter2"
+    out = capsys.readouterr().out
+    assert "Scanning" not in out and "STATE -> 0x3c (connected)" in out
+    assert "<redacted>" in out and "hunter2" not in out
+
+
+def test_provision_with_wifi_scan_copies_the_security_enums_and_writes_encrypted_credentials(fake_ble, capsys):
+    asyncio.run(ble.provision(FakeScanner.device.address, "hotspot", "hunter2", wait=0.01, wifi_scan=True))
     (client,) = fake_ble.instances
     chars = [c for c, _ in client.writes]
     assert chars[0] == ble.WINDOW_CRYPTO[1]  # the key read comes before the Wi-Fi rescan
@@ -232,39 +254,34 @@ def test_provision_scans_copies_the_security_enums_and_writes_encrypted_credenti
     assert "Controller IP: 192.168.2.3" in out
 
 
-def test_provision_matches_by_service_data_and_overrides(fake_ble):
-    asyncio.run(
-        ble.provision(
-            "unknown-address", "hotspot", None, wpa_auth=1, wpa_cipher=1, service_data_match="7AC0", wait=0.01
-        )
-    )
+def test_provision_matches_by_service_data_and_takes_an_open_network_without_a_password(fake_ble):
+    asyncio.run(ble.provision("unknown-address", "hotspot", None, service_data_match="7AC0", wait=0.01))
     (client,) = fake_ble.instances
     payload = json.loads(client.writes[-1][1])
-    assert (payload["wpa_auth"], payload["wpa_cipher"]) == (1, 1)
+    assert (payload["wpa_auth"], payload["wpa_cipher"]) == ble.OPEN_NETWORK == (1, 1)
     assert "enc_passwd" not in payload  # an open network: nothing to encrypt, no key read
     assert not any(c == ble.WINDOW_CRYPTO[1] for c, _ in client.writes)
 
 
-def test_provision_skip_scan_never_touches_the_scan_and_drops_bssid(fake_ble):
+@pytest.mark.parametrize("wifi_scan", [False, True])
+def test_provision_takes_given_security_enums_over_the_default_and_the_scan(fake_ble, wifi_scan):
     asyncio.run(
         ble.provision(
-            FakeScanner.device.address, "hotspot", "hunter2", wpa_auth=7, wpa_cipher=4, wait=0.01, skip_scan=True
+            FakeScanner.device.address, "hotspot", "hunter2", wpa_auth=2, wpa_cipher=2, wait=0.01, wifi_scan=wifi_scan
         )
     )
     (client,) = fake_ble.instances
-    chars = [c for c, _ in client.writes]
-    assert ble.CHAR_SETTINGS not in chars  # no settings write: no Wi-Fi scan, the link survives
-    assert ble.WINDOW_SCAN[1] not in chars
     payload = json.loads(client.writes[-1][1])
-    assert (payload["wpa_auth"], payload["wpa_cipher"]) == (7, 4)  # supplied, not scan-copied
-    assert "bssid" not in payload and "frequency" not in payload  # the controller joins without them
-    assert PRIVATE_KEY.decrypt(base64.b64decode(payload["enc_passwd"]), padding.PKCS1v15()) == b"hunter2"
+    assert (payload["wpa_auth"], payload["wpa_cipher"]) == (2, 2)
+    assert ("bssid" in payload) == wifi_scan  # the scan still gives the bssid and the frequency
 
 
-@pytest.mark.usefixtures("fake_ble")
-def test_provision_skip_scan_demands_the_security_enums():
-    with pytest.raises(ble.ProvisioningError, match="--skip-scan needs"):
-        asyncio.run(ble.provision(FakeScanner.device.address, "hotspot", "x", wait=0.01, skip_scan=True))
+@pytest.mark.parametrize("wifi_scan", [False, True])
+def test_provision_reports_a_failed_join_with_what_to_check(fake_ble, wifi_scan):
+    fake_ble.join_state = ble.STATE_JOIN_FAILED
+    with pytest.raises(ble.ProvisioningError, match=r"did not join 'hotspot' \(STATE 0x4f\)") as failure:
+        asyncio.run(ble.provision(FakeScanner.device.address, "hotspot", "hunter2", wait=0.01, wifi_scan=wifi_scan))
+    assert ("--wifi-scan" in str(failure.value)) != wifi_scan  # suggested only when it was not used
 
 
 @pytest.mark.usefixtures("fake_ble")
@@ -272,13 +289,13 @@ def test_provision_errors_are_reported_not_raised_as_tracebacks():
     with pytest.raises(ble.ProvisioningError, match="not advertising"):
         asyncio.run(ble.provision("unknown-address", "hotspot", "x", wait=0.01))
     with pytest.raises(ble.ProvisioningError, match="not found in scan results"):
-        asyncio.run(ble.provision(FakeScanner.device.address, "elsewhere", "x", wait=0.01))
+        asyncio.run(ble.provision(FakeScanner.device.address, "elsewhere", "x", wait=0.01, wifi_scan=True))
 
 
 @pytest.mark.parametrize(("window", "what"), [(ble.WINDOW_CRYPTO, "public key"), (ble.WINDOW_SCAN, "scan results")])
 def test_provision_reports_a_window_cut_short_and_writes_nothing(fake_ble, window, what):
     fake_ble.torn = {window}
     with pytest.raises(ble.ProvisioningError, match=f"{what} could not be read"):
-        asyncio.run(ble.provision(FakeScanner.device.address, "hotspot", "hunter2", wait=0.01))
+        asyncio.run(ble.provision(FakeScanner.device.address, "hotspot", "hunter2", wait=0.01, wifi_scan=True))
     (client,) = fake_ble.instances
     assert ble.CHAR_CONNECT not in [c for c, _ in client.writes]
