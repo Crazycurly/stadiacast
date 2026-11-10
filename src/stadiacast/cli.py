@@ -22,8 +22,28 @@ DEFAULT_CERT = "certs/fullchain.pem"
 DEFAULT_KEY = "certs/privkey.pem"
 
 
+DOCS = "https://github.com/jkfran/stadiacast/blob/main/docs"
+
+
 def _csv(value: str) -> tuple[str, ...]:
     return tuple(p.strip() for p in value.split(",") if p.strip())
+
+
+def _ports(value: str) -> tuple[int, ...]:
+    try:
+        ports = tuple(int(p) for p in _csv(value))
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{value!r} is not a comma separated list of port numbers") from None
+    if any(not 0 <= p <= 65535 for p in ports):
+        raise argparse.ArgumentTypeError(f"{value!r} has a port outside 0 to 65535")
+    return ports
+
+
+def _wire_id(value: str) -> int:
+    try:
+        return int(value, 0)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{value!r} is not a number (decimal, or hexadecimal as 0x75)") from None
 
 
 class _ListAudioDevices(argparse.Action):
@@ -51,8 +71,8 @@ def build_parser(preset: str | None = None) -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Start with --preset live for the flag set proven against the real controller; explicit flags\n"
-            "override it.  docs/setup.md covers the network rig and the certificate, docs/protocol.md the\n"
-            "protocol behind every knob."
+            "override it.  The setup guide covers the network and the certificate, the protocol notes what\n"
+            f"is behind every knob:\n  {DOCS}/setup.md\n  {DOCS}/protocol.md"
         ),
     )
     ap.add_argument(
@@ -90,9 +110,14 @@ def build_parser(preset: str | None = None) -> argparse.ArgumentParser:
     )
 
     g = ap.add_argument_group("listeners")
-    g.add_argument("--bind", default="0.0.0.0")
-    g.add_argument("--https-port", type=int, default=443)
-    g.add_argument("--http-ports", default="80,8008", help="comma separated plaintext ports ('' to disable)")
+    g.add_argument("--bind", default="0.0.0.0", help="address the listeners and UDP sockets bind (default: all)")
+    g.add_argument("--https-port", type=int, default=443, help="the controller connects to 443 only (default)")
+    g.add_argument(
+        "--http-ports",
+        type=_ports,
+        default=(80, 8008),
+        help="comma separated plaintext ports, for the control endpoints (default: 80,8008; '' to disable)",
+    )
     g.add_argument("--udp-port", type=int, default=40000, help="STUN/DTLS/RTP socket of the display link")
     g.add_argument(
         "--game-udp-port",
@@ -100,8 +125,18 @@ def build_parser(preset: str | None = None) -> argparse.ArgumentParser:
         default=40001,
         help="UDP socket of the game-session endpoint answered to the controller's InitializationRequest (0 = any)",
     )
-    g.add_argument("--advertise-ip", default=None, help="IP written into ICE candidates (default: auto)")
-    g.add_argument("--controller-ip", default="192.168.2.2")
+    g.add_argument(
+        "--advertise-ip",
+        default=None,
+        help="this computer's address on the controller's network: written into ICE candidates and the DNS "
+        "sink's answers (default: the address of the interface that routes to --controller-ip)",
+    )
+    g.add_argument(
+        "--controller-ip",
+        default="192.168.2.2",
+        help="an address on the controller's network, the controller's when it is known: marks its lines in "
+        "the helpers' logs and tells --advertise-ip which interface is meant (default: 192.168.2.2)",
+    )
     g.add_argument("--idle-timeout", type=float, default=30.0, help="seconds an HTTP connection may idle")
 
     g = ap.add_argument_group("helper processes")
@@ -177,7 +212,13 @@ def build_parser(preset: str | None = None) -> argparse.ArgumentParser:
     )
 
     g = ap.add_argument_group("RTC")
-    g.add_argument("--dtls-role", choices=("auto", "client", "server"), default="auto")
+    g.add_argument(
+        "--dtls-role",
+        choices=("auto", "client", "server"),
+        default="auto",
+        help="server: wait for the controller's ClientHello, as the live preset does; auto: also start the "
+        "handshake when none has come (default)",
+    )
     g.add_argument(
         "--ice-fast-checks",
         type=float,
@@ -190,7 +231,9 @@ def build_parser(preset: str | None = None) -> argparse.ArgumentParser:
         "--rtcp-interval", type=float, default=1.0, help="seconds between display-side RTCP RRs after DTLS (0 disables)"
     )
     g.add_argument("--ack-mode", choices=("rtp", "none"), default="rtp", help="echo InputProtocolMessage acks")
-    g.add_argument("--input-payload-type", type=int, default=96)
+    g.add_argument(
+        "--input-payload-type", type=int, default=96, help="RTP payload type of our input acks (default: 96)"
+    )
 
     g = ap.add_argument_group("headset audio")
     g.add_argument(
@@ -281,7 +324,7 @@ def build_parser(preset: str | None = None) -> argparse.ArgumentParser:
     )
     g.add_argument(
         "--rpc-wire-id",
-        type=lambda v: int(v, 0),
+        type=_wire_id,
         default=WIRE_ID_DC_RPC_DISPLAY,
         help="WireHeader2 id of our display RPC records (default 0x75; the controller accepts 1..255; "
         "0xFFFA is dropped)",
@@ -367,11 +410,17 @@ def parse_args(argv: Sequence[str] | None = None) -> Config:
     rpc_fields = {}
     for item in a.rpc_fields:
         k, _, v = item.partition("=")
-        rpc_fields[k.strip()] = json.loads(v)
+        try:
+            rpc_fields[k.strip()] = json.loads(v)
+        except ValueError as e:
+            ap.error(f"--rpc-fields {k.strip()}: the value is not JSON ({e})")
     overrides = {}
     if a.offer_json:
         with open(a.offer_json, encoding="utf-8") as fh:
-            overrides = json.load(fh)
+            try:
+                overrides = json.load(fh)
+            except ValueError as e:
+                ap.error(f"--offer-json {a.offer_json}: the file is not JSON ({e})")
     return Config(
         cert=a.cert or DEFAULT_CERT,
         key=a.key or DEFAULT_KEY,
@@ -380,7 +429,7 @@ def parse_args(argv: Sequence[str] | None = None) -> Config:
         clock_pin=None if a.clock_pin == "real" else a.clock_pin,
         bind=a.bind,
         https_port=a.https_port,
-        http_ports=tuple(int(p) for p in _csv(a.http_ports)),
+        http_ports=a.http_ports,
         udp_port=a.udp_port,
         game_udp_port=a.game_udp_port,
         advertise_ip=a.advertise_ip,
@@ -443,15 +492,20 @@ async def amain(cfg: Config) -> int:
             loop.add_signal_handler(sig, stop.set)
         except NotImplementedError:
             pass
-    await receiver.start()
-    print(
-        f"\nstadiacast {__version__} ready: https :{receiver.http.https_port}  http {receiver.http.http_ports}  "
-        f"udp {cfg.advertise_ip}:{cfg.udp_port}/{cfg.game_udp_port} (+2 per controller)  logs {cfg.log_dir}\n"
-        "wake the controller(s) now; Ctrl-C to stop.\n",
-        flush=True,
-    )
-    await stop.wait()
-    await receiver.stop()
+    try:
+        await receiver.start()
+        print(
+            f"\nstadiacast {__version__} ready: https :{receiver.http.https_port}  http {receiver.http.http_ports}  "
+            f"udp {cfg.advertise_ip}:{cfg.udp_port}/{cfg.game_udp_port} (+2 per controller)  logs {cfg.log_dir}\n"
+            "wake the controller(s) now; Ctrl-C to stop.\n",
+            flush=True,
+        )
+        await stop.wait()
+    finally:
+        # Also on the way out of a start that failed half way, and on Windows, where Ctrl-C cancels
+        # this task instead of setting the event: the helpers, the streams and the virtual pads
+        # are the receiver's to stop.
+        await receiver.stop()
     return 0
 
 

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import os
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -11,7 +14,7 @@ import pytest
 
 from stadiacast import __version__, cli
 from stadiacast.cli import DEFAULT_CERT, DEFAULT_KEY, main, parse_args
-from stadiacast.config import PRESETS
+from stadiacast.config import PRESETS, Config
 from stadiacast.errors import SetupError
 from stadiacast.helpers import DNS_SINK, HELPERS, SNTP_SERVER, helper_command
 
@@ -148,3 +151,77 @@ def test_helpers_run_through_the_executable_when_frozen(monkeypatch, capsys):
         main(["--helper", "sntp_server", "--help"])  # dispatched: the helper's own argparse answers
     assert exc.value.code == 0
     assert "--port" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("argv", "said"),
+    [
+        (["--http-ports", "80,abc"], "--http-ports: '80,abc' is not a comma separated list of port numbers"),
+        (["--http-ports", "80,70000"], "--http-ports: '80,70000' has a port outside 0 to 65535"),
+        (["--rpc-wire-id", "xyz"], "--rpc-wire-id: 'xyz' is not a number"),
+        (["--rpc-fields", "RegisterController={bad"], "--rpc-fields RegisterController: the value is not JSON"),
+    ],
+)
+def test_a_bad_value_is_reported_with_the_flag_it_was_given_to(capsys, argv, said):
+    with pytest.raises(SystemExit) as stop:
+        parse_args(argv)
+    assert stop.value.code == 2 and said in capsys.readouterr().err
+
+
+def test_a_bad_offer_file_is_reported_with_its_flag(tmp_path, capsys):
+    (tmp_path / "offer.json").write_text("{bad")
+    with pytest.raises(SystemExit):
+        parse_args(["--offer-json", str(tmp_path / "offer.json")])
+    assert "--offer-json" in capsys.readouterr().err
+
+
+def lab_config(tmp_path: Path, **overrides: object) -> Config:
+    settings: dict = {
+        "cert": str(tmp_path / "lab.crt"),
+        "key": str(tmp_path / "lab.key"),
+        "cert_given": True,
+        "self_signed": True,
+        "bind": "127.0.0.1",
+        "https_port": 0,
+        "http_ports": (0,),
+        "udp_port": 0,
+        "game_udp_port": 0,
+        "advertise_ip": "127.0.0.1",
+        "log_dir": str(tmp_path / "run"),
+        "echo": False,
+    }
+    return Config(**{**settings, **overrides})
+
+
+def events(tmp_path: Path) -> list[str]:
+    lines = (tmp_path / "run" / "server.jsonl").read_text().splitlines()
+    return [json.loads(line)["event"] for line in lines]
+
+
+def test_the_receiver_is_stopped_when_its_task_is_cancelled(tmp_path, capsys):
+    """On Windows Ctrl-C cancels the task instead of setting the stop event: the receiver, which
+    owns helper processes, streams and virtual pads, is stopped all the same."""
+
+    async def run():
+        task = asyncio.get_running_loop().create_task(cli.amain(lab_config(tmp_path)))
+        for _ in range(200):
+            if "ready: https" in capsys.readouterr().out:
+                break
+            await asyncio.sleep(0.01)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(run())
+    assert events(tmp_path)[-1] == "stopped" and "ready" in events(tmp_path)
+
+
+def test_a_start_that_fails_stops_what_it_started_and_reports_the_port(tmp_path, capsys):
+    with socket.socket() as holder:
+        holder.bind(("127.0.0.1", 0))
+        holder.listen(1)
+        port = holder.getsockname()[1]
+        with pytest.raises(OSError, match=rf"cannot listen on 127\.0\.0\.1:{port} \(https\): TCP port {port} is taken"):
+            asyncio.run(cli.amain(lab_config(tmp_path, https_port=port)))
+    assert events(tmp_path)[-1] == "stopped" and "ready" not in events(tmp_path)
+    assert "ready: https" not in capsys.readouterr().out

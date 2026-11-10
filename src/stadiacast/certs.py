@@ -72,15 +72,24 @@ def ensure_certificate(cfg: Config, log: EventLog) -> None:
     ``cfg.self_signed`` without named files (``cfg.cert_given`` false) keeps its lab pair in the
     run directory and points ``cfg.cert`` / ``cfg.key`` at it, so a lab run never leaves a
     certificate under ``certs/`` for a later live run to serve.  Otherwise existing files win;
-    ``cfg.self_signed`` creates the lab pair at the named paths when they are missing, a
+    ``cfg.self_signed`` creates the lab pair at the named paths when both are missing, a
     configuration that named no files falls back to the built-in credential, which is unpacked
     into a private temporary directory, and anything else raises :class:`FileNotFoundError`.
+    Half a pair at named paths is an error too: creating the lab pair there would overwrite the
+    file that exists.
     """
     if cfg.self_signed and not cfg.cert_given:
         run_dir = cfg.log_dir or "."
         cfg.cert, cfg.key = os.path.join(run_dir, "self-signed.crt"), os.path.join(run_dir, "self-signed.key")
-    if os.path.exists(cfg.cert) and os.path.exists(cfg.key):
+    have_cert, have_key = os.path.exists(cfg.cert), os.path.exists(cfg.key)
+    if have_cert and have_key:
         return
+    half = None
+    if have_cert != have_key:
+        present, missing = (cfg.cert, cfg.key) if have_cert else (cfg.key, cfg.cert)
+        half = f"{present} is there without {missing}"
+        if cfg.cert_given or cfg.self_signed:
+            raise FileNotFoundError(f"half a certificate pair: {half}")
     if cfg.self_signed:
         create_self_signed(cfg.cert, cfg.key)
         log(
@@ -103,6 +112,7 @@ def ensure_certificate(cfg: Config, log: EventLog) -> None:
             not_after=info["not_after"],
             chain=len(chain),
             note="a Google Trust Services chain revoked before publication; the controller checks only the chain",
+            ignored=half,  # half a pair under certs/: not served
         )
         return
     raise FileNotFoundError(

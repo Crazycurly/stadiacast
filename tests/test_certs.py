@@ -58,6 +58,33 @@ def test_ensure_certificate_creates_a_lab_pair_only_when_asked(tmp_path):
     assert log.counts == {"self_signed_certificate_created": 1}
 
 
+@pytest.mark.parametrize("there", ["c.pem", "k.pem"])
+@pytest.mark.parametrize("self_signed", [False, True])
+def test_half_a_pair_at_named_paths_is_an_error_and_is_left_alone(tmp_path, there, self_signed):
+    """With --self-signed the lab pair is created when both files are missing.  One of them
+    existing is somebody's certificate or key: it is not written over."""
+    (tmp_path / there).write_text("mine")
+    cfg = Config(cert=str(tmp_path / "c.pem"), key=str(tmp_path / "k.pem"), cert_given=True, self_signed=self_signed)
+    log = EventLog(None, echo=False)
+    with pytest.raises(FileNotFoundError, match=rf"half a certificate pair: .*{there} is there without"):
+        ensure_certificate(cfg, log)
+    assert (tmp_path / there).read_text() == "mine" and len(list(tmp_path.iterdir())) == 1 and log.counts == {}
+
+
+def test_half_a_pair_under_the_default_paths_is_named_when_the_builtin_credential_is_served(tmp_path, monkeypatch):
+    blob_path = tmp_path / "identity.bin"
+    blob_path.write_bytes(_packed_lab_credential(tmp_path / "src"))
+    monkeypatch.setattr(certs, "BUILTIN_CREDENTIAL", str(blob_path))
+    (tmp_path / "certs").mkdir()
+    (tmp_path / "certs" / "fullchain.pem").write_text("a chain whose key was never put next to it")
+    cfg = Config(cert=str(tmp_path / "certs" / "fullchain.pem"), key=str(tmp_path / "certs" / "privkey.pem"))
+    log = EventLog(None, echo=False)
+    ensure_certificate(cfg, log)
+    (record,) = log.records
+    assert record["event"] == "builtin_credential" and "fullchain.pem is there without" in record["ignored"]
+    assert os.path.dirname(cfg.cert) != str(tmp_path / "certs")
+
+
 def test_the_lab_pair_stays_in_the_run_directory_unless_paths_were_named(tmp_path):
     """A lab run must not leave a pair under certs/ for a later live run to serve."""
     log = EventLog(None, echo=False)
