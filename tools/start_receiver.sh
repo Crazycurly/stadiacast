@@ -40,13 +40,31 @@ fi
 
 RUN=captures/$(date +%Y%m%d-%H%M%S)
 mkdir -p "$RUN"
+server_pid=
+tcpdump_pid=
+
+# Stop what this script started in $RUN and remove its pid files. The receiver stops its own
+# helpers on SIGTERM; a helper still running after it is gone is stopped here.
+stop_run() {
+  if [ -n "$server_pid" ] && kill "$server_pid" 2>/dev/null; then
+    for _ in $(seq 1 75); do
+      kill -0 "$server_pid" 2>/dev/null || break
+      sleep 0.2
+    done
+    kill -9 "$server_pid" 2>/dev/null || true
+  fi
+  pkill -f "stadiacast[.]helpers[.](dns_sink|sntp_server) .*--log $RUN/" 2>/dev/null || true
+  if [ -n "$tcpdump_pid" ]; then kill "$tcpdump_pid" 2>/dev/null || true; fi
+  rm -f "$RUN/server.pid" "$RUN/tcpdump.pid"
+}
 
 if [ "$PCAP" = 1 ]; then
   if [ -r /dev/bpf0 ] && [ -w /dev/bpf0 ]; then
     read -ra pcap_filter <<< "$PCAP_FILTER"
     nohup tcpdump -i "$IFACE" -n -e -s0 -U -w "$RUN/$IFACE.pcap" ${pcap_filter[@]+"${pcap_filter[@]}"} \
       > "$RUN/tcpdump.out" 2>&1 &
-    echo $! > "$RUN/tcpdump.pid"
+    tcpdump_pid=$!
+    echo "$tcpdump_pid" > "$RUN/tcpdump.pid"
   else
     echo "capture skipped: /dev/bpf* not accessible (sudo chmod o+rw /dev/bpf* once, or PCAP=0)" >&2
   fi
@@ -56,13 +74,17 @@ args=(--preset live)
 if [ -n "$ADVERTISE_IP" ]; then args+=(--advertise-ip "$ADVERTISE_IP"); fi
 args+=(--dns-upstream "$DNS_UPSTREAM" --controller-ip "$CONTROLLER_IP" -v --log-dir "$RUN")
 nohup "$PYTHON" -m stadiacast "${args[@]}" "$@" > "$RUN/server.out" 2>&1 &
-echo $! > "$RUN/server.pid"
+server_pid=$!
+echo "$server_pid" > "$RUN/server.pid"
 
+ready() { grep -q '"event": "ready"' "$RUN/server.jsonl" 2>/dev/null; }
 for _ in $(seq 1 20); do
-  grep -q '"event": "ready"' "$RUN/server.jsonl" 2>/dev/null && break
+  ready && break
+  kill -0 "$server_pid" 2>/dev/null || break
   sleep 0.5
 done
-if ! grep -q '"event": "ready"' "$RUN/server.jsonl" 2>/dev/null; then
+if ! ready; then
+  stop_run
   echo "receiver did not report ready; see $RUN/server.out" >&2
   exit 1
 fi
