@@ -634,9 +634,8 @@ class ControllerSession:
                 handler = "signaling:answer-accepted"
                 extra["answer"] = p.to_dict(a)
             elif s.type == p.ICE_CANDIDATE:
-                addr = signaling.candidate_address(s)
+                addr = self._add_candidate(s)
                 if addr:
-                    self.endpoint.add_remote_candidate(*addr)
                     extra.setdefault("candidates", []).append(list(addr))
                 if reply is None:
                     reply = b""

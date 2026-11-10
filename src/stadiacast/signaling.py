@@ -8,6 +8,7 @@ both the display link and the game session; the receiver decides when to send th
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import re
 import secrets
@@ -148,11 +149,19 @@ def bundle(protos: Protos, sdp_msg: Any, candidate: Any) -> bytes:
 
 
 def candidate_address(sdp_msg: Any) -> tuple[str, int] | None:
-    """``(ip, port)`` of a ``WebRtcSdp{ICE_CANDIDATE}``, from the structured fields or the raw SDP line."""
+    """``(ip, port)`` of a ``WebRtcSdp{ICE_CANDIDATE}``, from the structured fields or the raw SDP line.
+
+    None for anything a datagram cannot be sent to: a name instead of an address literal, or a
+    port outside 1 to 65535.  The socket would resolve the first while the event loop waits, and
+    asyncio closes it for good on the second."""
     c = sdp_msg.ice_candidate
     ip, port = c.local_endpoint_ip, c.local_endpoint_port
     if not ip and sdp_msg.raw_value:
         m = _RAW_CANDIDATE.search(" " + sdp_msg.raw_value + " ")
         if m:
             ip, port = m.group(1), int(m.group(2))
-    return (ip, int(port)) if ip and port else None
+    try:
+        ipaddress.ip_address(ip)
+    except ValueError:
+        return None
+    return (ip, int(port)) if 0 < int(port) < 65536 else None

@@ -23,14 +23,27 @@ def _ignore_event(_ev: dict[str, Any]) -> None:
     """Default ``on_event``."""
 
 
+#: The most a ``compressed_series`` may expand to.  A series of input messages is a few hundred
+#: bytes; the limit keeps a crafted one from filling memory and stalling every controller's link.
+MAX_SERIES_BYTES = 64 * 1024
+
+
 def decompress_series(data: bytes) -> bytes:
     """``InputProtocolMessage.compressed_series``: the firmware mentions both gzip and deflate, so
     try zlib / gzip framing first, then raw deflate."""
     for wbits in (zlib.MAX_WBITS | 32, -zlib.MAX_WBITS):
+        inflater = zlib.decompressobj(wbits)
         try:
-            return zlib.decompress(data, wbits)
+            series = inflater.decompress(data, MAX_SERIES_BYTES)
+            # short of the stream's end, either the limit stopped it or the stream is cut short:
+            # asking for one more byte tells which
+            beyond = b"" if inflater.eof else inflater.decompress(inflater.unconsumed_tail, 1)
         except zlib.error:
             continue
+        if beyond:
+            raise ValueError(f"compressed_series expands beyond {MAX_SERIES_BYTES} bytes")
+        if inflater.eof:
+            return series
     raise ValueError("compressed_series is neither zlib/gzip nor raw deflate")
 
 

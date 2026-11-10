@@ -147,14 +147,18 @@ class GamepadState:
             w |= XINPUT_GUIDE
         lx, ly = radial_deadzone(self.lx, self.ly, left_deadzone)
         rx, ry = radial_deadzone(self.rx, self.ry, right_deadzone)
+
+        def stick(v: int) -> int:  # the game session's fields are wider than XInput's
+            return max(STICK_MIN, min(STICK_MAX, v))
+
         return {
             "wButtons": w,
-            "bLeftTrigger": self.l2,
-            "bRightTrigger": self.r2,
-            "sThumbLX": lx,
-            "sThumbLY": ly,
-            "sThumbRX": rx,
-            "sThumbRY": ry,
+            "bLeftTrigger": max(0, min(TRIGGER_MAX, self.l2)),
+            "bRightTrigger": max(0, min(TRIGGER_MAX, self.r2)),
+            "sThumbLX": stick(lx),
+            "sThumbLY": stick(ly),
+            "sThumbRX": stick(rx),
+            "sThumbRY": stick(ry),
         }
 
     def as_event(self, prev: GamepadState | None) -> dict[str, Any]:

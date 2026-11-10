@@ -105,6 +105,17 @@ def test_stun_roundtrip():
     assert StunMessage.parse_xor_address(rb.get(ATTR_XOR_MAPPED_ADDRESS)) == ("192.168.2.2", 54237)
 
 
+def test_stun_fingerprint_of_the_wrong_length_is_a_bad_fingerprint():
+    """Any host can send this before a check is authenticated: it is dropped, not raised."""
+    attribute = ATTR_FINGERPRINT.to_bytes(2, "big") + (2).to_bytes(2, "big") + b"\x12\x34\0\0"
+    header = BINDING_REQUEST.to_bytes(2, "big") + len(attribute).to_bytes(2, "big") + RFC5769_REQUEST[4:20]
+    assert not StunMessage.parse(header + attribute).check_fingerprint()
+    events: list[str] = []
+    ep = RtcEndpoint(cert=DtlsCertificate(), log=lambda event, **_fields: events.append(event))
+    ep.datagram_received(header + attribute, ("192.168.2.9", 5000))
+    assert events == ["stun_bad_fingerprint"]
+
+
 # ---- RTP ----------------------------------------------------------------------
 
 
@@ -222,3 +233,4 @@ def test_fast_ice_checks_until_dtls():
     assert _binding_requests_sent_after_pairing(0.0, 0.5) == 1
     # fast: a check every 0.1 s while no DTLS session exists
     assert _binding_requests_sent_after_pairing(0.1, 0.55) >= 5
+

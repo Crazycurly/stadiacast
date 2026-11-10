@@ -106,7 +106,7 @@ class StunMessage:
 
     def check_fingerprint(self) -> bool:
         fp = self.get(ATTR_FINGERPRINT)
-        if self.fp_off is None or self.raw is None or fp is None:
+        if self.fp_off is None or self.raw is None or fp is None or len(fp) != 4:
             return False
         crc = (zlib.crc32(self._hdr(self.fp_off - 20 + 8) + self.raw[20 : self.fp_off]) ^ 0x5354554E) & 0xFFFFFFFF
         return bool(crc == struct.unpack("!I", fp)[0])

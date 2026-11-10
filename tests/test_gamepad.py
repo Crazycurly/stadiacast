@@ -80,3 +80,13 @@ def test_radial_deadzone():
     assert 0 < x < 20000
     assert y == 0
     assert radial_deadzone(1234, -5, 0) == (1234, -5)  # disabled
+
+
+def test_xinput_fields_stay_in_range_whatever_the_report_carries():
+    """The game session's axis fields are wider than XInput's: a value beyond them is clamped."""
+    wide = GamepadState(lx=70000, ly=-70000, rx=32768, ry=-32769, l2=300, r2=-5)
+    xi = wide.to_xinput()
+    assert (xi["sThumbLX"], xi["sThumbLY"], xi["sThumbRX"], xi["sThumbRY"]) == (32767, -32768, 32767, -32768)
+    assert (xi["bLeftTrigger"], xi["bRightTrigger"]) == (255, 0)
+    xi = wide.to_xinput(7849, 8689)  # with the deadzones the sticks are rescaled, and stay in range too
+    assert all(-32768 <= xi[axis] <= 32767 for axis in ("sThumbLX", "sThumbLY", "sThumbRX", "sThumbRY"))
