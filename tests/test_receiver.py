@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
 import time
 
 from stadiacast import receiver as receiver_module
@@ -98,5 +99,25 @@ def test_counters_are_logged_while_a_controller_sends_and_not_for_what_only_the_
             stats.cancel()
             fc.close()
             await rx.stop()
+
+    asyncio.run(run())
+
+
+def test_a_body_that_cannot_be_saved_does_not_cost_the_request_its_answer(tmp_path):
+    async def run():
+        rx = make_receiver(tmp_path)
+        await rx.start()
+        fc = FakeController("127.0.0.1", rx.http.https_port, rx.protos, log=no_log)
+        try:
+            shutil.rmtree(os.path.join(rx.cfg.log_dir, "bodies"))  # what a full disk does to the write
+            st, _, body = await fc.request(
+                "POST", "update.googleapis.com", "/service/update2", b"<request/>", "text/xml"
+            )
+            assert st == 200 and b"<response" in body
+        finally:
+            fc.close()
+            await rx.stop()
+        assert rx.log.counts.get("body_not_saved") == 1
+        assert [r["body_file"] for r in rx.log.records if r["event"] == "http_request"] == [None]
 
     asyncio.run(run())

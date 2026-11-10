@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import sys
 import threading
 from collections import deque
 from typing import Any, ClassVar, Protocol
@@ -102,7 +103,13 @@ class EventLog:
         with self._lock:
             self.counts[event] = self.counts.get(event, 0) + 1
             if self._fh:
-                self._fh.write(json.dumps(rec, default=str, ensure_ascii=False) + "\n")
+                try:
+                    self._fh.write(json.dumps(rec, default=str, ensure_ascii=False) + "\n")
+                except OSError as e:
+                    # A full disk must not take the links down with it: every datagram and request
+                    # handler logs.  The file is given up, the console and the memory go on.
+                    self._fh = None
+                    print(f"stadiacast: the log {self.path} can no longer be written ({e})", file=sys.stderr)
             self.records.append(rec)
         if self.echo and not _quiet:
             try:

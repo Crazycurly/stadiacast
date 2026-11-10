@@ -7,6 +7,8 @@ import json
 import random
 import socket
 
+import pytest
+
 from stadiacast import receiver as receiver_module
 from tests.helpers import connect_firmware_flow, fake, make_receiver, wait_for
 
@@ -213,16 +215,35 @@ def test_a_controller_beyond_the_limit_takes_over_the_ports_of_the_one_idle_long
     asyncio.run(run())
 
 
+def test_udp_ports_taken_at_start_stop_the_receiver_with_the_reason(tmp_path):
+    """The UDP sockets are opened per controller, later: without a look at start, taken ports would
+    show only as a controller that never connects."""
+    first = free_udp_ports(2)
+    other_program = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    other_program.bind(("127.0.0.1", first + 1))
+
+    async def run():
+        rx = make_receiver(tmp_path, udp_port=first, game_udp_port=first + 1)
+        try:
+            with pytest.raises(OSError, match=rf"UDP \(game\) port {first + 1} is taken by another program"):
+                await rx.start()
+        finally:
+            other_program.close()
+            await rx.stop()
+
+    asyncio.run(run())
+
+
 def test_a_udp_port_taken_by_another_program_is_tried_again_at_the_next_request(tmp_path):
     """A session whose UDP port cannot be bound fails that request and keeps nothing: the
     controller's next request tries the same pair of ports, and gets them once they are free."""
     first = free_udp_ports(4)
     other_program = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    other_program.bind(("127.0.0.1", first + 1))  # the game port of the first session
 
     async def run():
         rx = make_receiver(tmp_path, udp_port=first, game_udp_port=first + 1)
         await rx.start()
+        other_program.bind(("127.0.0.1", first + 1))  # the game port of the first session, taken since the start
         fc = fake(rx, "fake-a")
         try:
             st, _, _ = await fc.request(

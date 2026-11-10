@@ -570,7 +570,7 @@ def _loopback_input_present() -> bool:
     not _loopback_input_present() or ffmpeg_path() is None, reason="needs PortAudio, a loopback input and ffmpeg"
 )
 def test_the_system_source_keeps_real_time() -> None:
-    """The whole capture chain on a machine with a loopback device: no sample is dropped."""
+    """The whole capture chain on a machine with a loopback device: the stream keeps up."""
 
     async def run() -> None:
         ep = _StubEndpoint()

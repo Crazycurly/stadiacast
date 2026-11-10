@@ -53,3 +53,24 @@ def test_console_rendering_of_http_and_input_records():
     assert format_input_event({"type": "keyboard_message_v2", "t_us": 0, "data": {"k": 1}}).startswith(
         "[input] keyboard_message_v2 t=0.000s"
     )
+
+
+def test_a_log_file_that_can_no_longer_be_written_does_not_raise(tmp_path, capsys):
+    """Every datagram and request handler logs: a full disk must not take the links down."""
+    log = EventLog(str(tmp_path / "server.jsonl"), echo=False)
+    log("before")
+
+    class Full:
+        def write(self, _text: str) -> int:
+            raise OSError(28, "No space left on device")
+
+        def close(self) -> None:
+            pass
+
+    log._fh.close()
+    log._fh = Full()
+    assert log("after", n=1)["n"] == 1 and log("later")["event"] == "later"
+    assert [r["event"] for r in log.records] == ["before", "after", "later"]
+    err = capsys.readouterr().err
+    assert err.count("can no longer be written") == 1 and "No space left on device" in err
+    log.close()

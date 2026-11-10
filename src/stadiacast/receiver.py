@@ -19,6 +19,7 @@ import html
 import json
 import os
 import re
+import socket
 import time
 import traceback
 from typing import Any
@@ -35,7 +36,7 @@ from stadiacast.errors import SetupError
 from stadiacast.helpers import DNS_SINK, SNTP_SERVER, helper_command
 from stadiacast.http_server import HttpRequest, HttpResponse, HttpServer
 from stadiacast.log import EventLog
-from stadiacast.netutil import fetch_upstream, local_ip_towards
+from stadiacast.netutil import bind_hint, fetch_upstream, local_ip_towards
 from stadiacast.protos import Protos, decode_unknown, printable
 from stadiacast.virtual_gamepad import VirtualGamepads
 
@@ -128,6 +129,7 @@ class Receiver:
                 self.cfg.bind if self.cfg.bind not in ("0.0.0.0", "") else "127.0.0.1"
             )
         await self.http.start()
+        self._check_udp_ports()
         if self.cfg.dns_upstream:
             await self._start_dns()
         if self.cfg.sntp:
@@ -152,6 +154,18 @@ class Receiver:
             start_game=self.cfg.start_game,
             log_dir=self.cfg.log_dir,
         )
+
+    def _check_udp_ports(self) -> None:
+        """A controller's two UDP sockets are opened when it first shows up.  Taken ports would
+        only be found then, as a controller that never connects: the first pair is tried now."""
+        for port, protocol in ((self.cfg.udp_port, "UDP (display link)"), (self.cfg.game_udp_port, "UDP (game)")):
+            if not port:
+                continue
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+                try:
+                    probe.bind((self.cfg.bind, port))
+                except OSError as e:
+                    raise OSError(bind_hint(port, protocol, e)) from e
 
     async def stop(self) -> None:
         if self._stats_task:
@@ -431,8 +445,12 @@ class Receiver:
         self._body_seq += 1
         safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", f"{req.host}{req.path}")[:80]
         path = os.path.join(self.cfg.log_dir, "bodies", f"{self._body_seq:04d}-{safe}.bin")
-        with open(path, "wb") as fh:
-            fh.write(req.body)
+        try:
+            with open(path, "wb") as fh:
+                fh.write(req.body)
+        except OSError as e:  # a full disk: the request is still answered
+            self.log("body_not_saved", path=path, error=str(e))
+            return None
         return path
 
     async def _route(self, req: HttpRequest) -> HttpResponse:
