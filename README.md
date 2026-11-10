@@ -41,7 +41,7 @@ vibrates on request and plays sound on its headset jack.
 ## Quick start
 
 ```sh
-pip install 'stadiacast[audio,gamepad]'              # or unpack an executable from the releases page
+pip install 'stadiacast[ble,audio,gamepad]'           # or unpack an executable from the releases page
 stadiacast --preset live --dns-upstream 192.168.1.1   # your router: the DNS sink forwards the rest there
 ```
 
@@ -125,8 +125,8 @@ archive for Windows x86_64, macOS (Apple silicon) and Linux x86_64, with `stadia
 terminal. The builds are not signed: macOS asks you to allow the program once (right-click,
 Open, or `xattr -d com.apple.quarantine stadiacast`) and Windows SmartScreen may warn.
 
-**From PyPI**, with Python 3.11 or newer: `pip install 'stadiacast[audio,gamepad]'` (or
-`uv tool install 'stadiacast[audio,gamepad]'`); the extras are optional, see below.
+**From PyPI**, with Python 3.11 or newer: `pip install 'stadiacast[ble,audio,gamepad]'` (or
+`uv tool install 'stadiacast[ble,audio,gamepad]'`); the extras are optional, see below.
 
 **From source**, with [uv](https://docs.astral.sh/uv/):
 
