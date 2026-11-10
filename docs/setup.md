@@ -42,6 +42,13 @@ Options, from simplest to most involved:
   --redirect-ip <receiver> --log dns.jsonl` runs it without the receiver, for example on a
   different host.
 
+On a network other than `192.168.2.x`, give the receiver the controller's address, or any
+address on its network, with `--controller-ip` (default `192.168.2.2`): the receiver takes its
+own address from the interface that routes there, and the DNS and SNTP logs mark that
+address's queries. When that picks the wrong interface, `--advertise-ip` sets the address the
+DNS sink answers with and the WebRTC answers carry. `tools/start_receiver.sh` reads both from
+`.env` (`CONTROLLER_IP`, `ADVERTISE_IP`).
+
 Caveat: when a redirected name gets NXDOMAIN the firmware falls back to `8.8.8.8` and reaches
 the real host through the NAT, which is why `--clearcut-block tls` (fail the TLS handshake)
 is preferred over `--clearcut-block dns` (see [protocol.md](protocol.md#7-clearcut-and-the-power-off)).
